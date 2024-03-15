@@ -1,0 +1,33 @@
+## Read tabular data into R
+# read.table(file, header = FALSE, sep = "", dec = ".")
+
+## Read "comma separated value" files (".csv")
+# read.csv(file, header = TRUE, sep = ",", dec = ".", ...)
+
+## Or use read.csv2: variant used in countries that 
+## use a comma as decimal point and a semicolon as field separator.
+# read.csv2(file, header = TRUE, sep = ";", dec = ",", ...)
+
+## Read TAB delimited files
+# read.delim(file, header = TRUE, sep = "\t", dec = ".", ...)
+# read.delim2(file, header = TRUE, sep = "\t", dec = ",", ...)
+
+```{r Imports}
+library(dplyr)
+```
+
+```{r Function}
+compute_TPM <- function(raw_counts, genes_length) {
+    RPK <- raw_counts %>%
+          genes_length 
+return(TPM)
+}
+```
+
+
+```{r Data Loading}
+
+BC2_COUNTS <- read.table('/home/francesco.massaini/Desktop/IMMUCAN/BC2/BC2_COUNTS.txt', header = TRUE,  sep = '	')
+
+
+```
