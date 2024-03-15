@@ -14,6 +14,9 @@
 
 ```{r Imports}
 library(dplyr)
+library(tibble)
+library(org.Hs.eg.db) # Homo sapiens db
+library(ADImpute) # to normalize with gene lenght
 ```
 
 ```{r Function}
@@ -24,10 +27,46 @@ return(TPM)
 }
 ```
 
-
 ```{r Data Loading}
+BC2_COUNTS <- read.table('/home/francesco.massaini/Desktop/IMMUCAN/BC2/BC2_COUNTS.txt', header = TRUE,  sep = '	', row.names = 1)
+```
 
-BC2_COUNTS <- read.table('/home/francesco.massaini/Desktop/IMMUCAN/BC2/BC2_COUNTS.txt', header = TRUE,  sep = '	')
+```{r}
+library(org.Hs.eg.db) # Homo sapiens db
+columns(org.Hs.eg.db) # to look at the columns of this db
 
+
+entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(BC2_COUNTS), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences  
+counts <- BC2_COUNTS %>%
+  mutate(ENSEMBL = rownames(BC2_COUNTS)) %>% # add a column
+  inner_join(., entrz, by="ENSEMBL") %>% # join, merge df with a common column (ENSEMBL)
+  dplyr::filter(!is.na(SYMBOL)) %>%
+  distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
+  column_to_rownames("SYMBOL") 
+
+counts$ENSEMBL = NULL # delete the ENSEMBL column
+```
+
+```{r}
+library(ADImpute)
+x = ADImpute::NormalizeTPM(counts, log = T)
+```
+
+```{r}
+library(RColorBrewer)
+library(pheatmap)
+sampleDists <- dist(t(counts)) #DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. distance is computed with eucledian metric 
+sampleDistMatrix <- as.matrix(sampleDists)
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
 
 ```
+
+```{r}
+sampleTree = hclust(dist(t(counts)), method = "average");
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+```
+
