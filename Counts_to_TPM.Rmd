@@ -5,22 +5,7 @@ date: "2024-03-18"
 output: pdf_document
 ---
 
-# Import and convert RAW counts into TPM. Starting w/ genes named with ENSEMBL ID 
-
-# General info about how to import data
-## Read tabular data into R
-# read.table(file, header = FALSE, sep = "", dec = ".")
-
-## Read "comma separated value" files (".csv")
-# read.csv(file, header = TRUE, sep = ",", dec = ".", ...)
-
-## Or use read.csv2: variant used in countries that 
-## use a comma as decimal point and a semicolon as field separator.
-# read.csv2(file, header = TRUE, sep = ";", dec = ",", ...)
-
-## Read TAB delimited files
-# read.delim(file, header = TRUE, sep = "\t", dec = ".", ...)
-# read.delim2(file, header = TRUE, sep = "\t", dec = ",", ...)
+# Inputs are the old version of Marcelo 
 
 
 ```{r setup, include=FALSE}
@@ -83,9 +68,6 @@ TPM_Heatmap <- function(TPM){
 
 ```{r Data Loading and plots}
 # Data Loading
-
-
-# setwd("/home/francesco.massaini/Desktop/IMMUCAN_data")
 
 path <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/01_Raw_Counts/BC2_COUNTS.txt",
           "/home/francesco.massaini/Desktop/IMMUCAN_data/BC3/01_Raw_Counts/BC3_COUNTS.txt",
