@@ -30,5 +30,3 @@ BC3 <- all_BCs[BC3_samples] %>%
 write.table(BC3, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/BC3/02_TPM/BC3_TPM_Mounim.txt", quote = F, sep = "\t", row.names = F)
 
 write.table(NSCLC, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC/02_TPM/NSCLC_TPM_Mounim.txt", quote = F, sep = "\t", row.names = F)
-
-  

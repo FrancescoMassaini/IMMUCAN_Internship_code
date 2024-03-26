@@ -16,12 +16,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r Imports}
 library(tidyverse)
-library(tibble)
-library(org.Hs.eg.db) # Homo sapiens db
-library(ADImpute) # to normalize with gene lenght
+library(dplyr)
 library(RColorBrewer) # for plot
 library(pheatmap) # for heatmaps
-library(ADImpute) # This package provides functions to compute TPM
 
 ```
 
@@ -31,22 +28,8 @@ library(ADImpute) # This package provides functions to compute TPM
 # library(org.Hs.eg.db) # Homo sapiens db
 # columns(org.Hs.eg.db) # to look at the columns of this db
 
-# Raw counts to TPM
-counts2TPM <- function(raw_counts_file){
-  entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(raw_counts_file), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your raw_counts_file 
-  raw_counts_file <- raw_counts_file %>%
-    mutate(ENSEMBL = rownames(raw_counts_file)) %>% # add a column
-    inner_join(., entrz, by="ENSEMBL") %>% # join, merge df with a common column (ENSEMBL)
-    dplyr::filter(!is.na(SYMBOL)) %>%
-    distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
-    column_to_rownames("SYMBOL") %>% 
-    dplyr::select(., -c("ENSEMBL")) 
-  TPM <- ADImpute::NormalizeTPM(raw_counts_file, log = T)
-return(TPM)  
-}
-
 # Plots - Heatmap
-TPM_Heatmap <- function(TPM){
+Compute_Samples_Heatmap <- function(TPM){
   TPM <- as.matrix(TPM)
   
   # Utilizes the NormalizeTPM function from the ADImpute package.
@@ -63,34 +46,28 @@ TPM_Heatmap <- function(TPM){
 }
 
 # Plots - Dendrogram
-TPM_Sample_dendrogram <- function(TPM){
+Compute_Samples_dendrogram <- function(TPM){
   sampleTree = hclust(dist(t(TPM)), method = "average");
   plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
 }
 ```
 
 
-# Data Loading
+# Data Loading and Plots
 
 ```{r Data Loading and plots}
 # Data Loading
 
-path <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/01_Raw_Counts/BC2_COUNTS.txt",
-          "/home/francesco.massaini/Desktop/IMMUCAN_data/BC3/01_Raw_Counts/BC3_COUNTS.txt",
-          "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC/01_Raw_Counts/NSCLC_COUNTS.txt")
+path <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/03_Deconvolution/all_deconvolutions_BC2_filtered_samples.txt")
 files_names <- gsub(".txt$", "", basename(path))
 folders_names <- strsplit(files_names, "_")
 
 # EDA
 for (i in 1:length(path)) {
-  counts <- read.table(path[i], header = TRUE,  sep = '	', row.names = 1)
-  TPM <- counts2TPM(counts) 
+  TPM <- read.table(path[i], header = TRUE,  sep = '	', row.names = 1)
   pdf(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = 16) # folders_names[[i]][1] double square bracket to access to the i vector, single bracket to access to the first value of the i vector 
-  # TPM_Heatmap(TPM)
-  # TPM_Sample_dendrogram(TPM)
-  # dev.off()
-  TPM <- data.frame(TPM) %>%
-    rownames_to_column("Genes")
-  write.table(TPM, file = paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_TPM/", files_names[i],"_TPM.txt"), quote = F, sep = "\t", row.names = F)
+  Compute_Samples_Heatmap(TPM)
+  Compute_Samples_dendrogram(TPM)
+  dev.off()
 }
 ```

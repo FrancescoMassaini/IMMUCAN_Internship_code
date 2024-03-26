@@ -1,0 +1,97 @@
+---
+title: "Plots_by_Method"
+author: "Francesco Massaini"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Imports
+```{r Imports}
+library(ggplot2)
+library(stringr)
+library(dplyr)
+```
+
+
+# Functions 
+```{r Functions}
+# Plots by methods showing cell proportions across samples
+
+plot_by_method <- function(selected_method, result_file) {
+  final_df = data.frame()
+  for (i in 1:nrow(result_file)) {
+    tmp = data.frame("Samples" = rownames(result_file)[i],
+                      "Cells" = colnames(result_file),
+                      "Prop" = as.vector(t(result_file[i,])))
+    final_df = rbind(final_df, tmp)
+  }
+  plot = ggplot(final_df) + 
+    ggtitle(selected_method) +
+    geom_bar(aes(x=Samples, y = Prop, fill= Cells), stat = "identity") + #specify only the NAMES of columns. Data are collected from ggplot(final_df)
+  # By default, the axes are aligned at the center of the text, even when rotated. When you rotate +/- 90 degrees, you usually want it to be aligned at the edge instead:
+  # vjust = 0.5 allinea il testo a meta della linea in cui deve stare il label dal punto di vista verticale
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 5),
+          legend.text = element_text(size = 5)) 
+  print(plot)
+}
+```
+
+
+# Data Loading
+```{r Data Loading}
+# Data Loading
+
+path <- "/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/03_Deconvolution/all_deconvolutions_BC2_filtered_samples.txt"
+data <- read.table(path, header = TRUE, sep = "\t", row.names = 1)
+
+fixed_methods <- read.table("/home/francesco.massaini/Desktop/IMMUCAN_data/fixed_methods.txt", header = FALSE, sep = "\t")
+variable_methods <- read.table("/home/francesco.massaini/Desktop/IMMUCAN_data/variable_methods.txt", header = FALSE, sep = "\t")
+```
+
+# List of combinations of methods and signatures
+```{r Combination of methods and signatures}
+
+empty_pos <-  which(variable_methods[,1] == "", arr.ind = TRUE) # Clean empty pos
+variable_methods_list <- variable_methods[-empty_pos,1]
+ # Keep only methods with variable signature
+ # Store signature
+
+all_ms <- fixed_methods[,1] # Store in a list all the combinations of methods and signatures
+for (i in variable_methods_list) {
+  # print(paste("i", i))
+  for (j in variable_methods[,2]){
+    # print(paste("j", j))
+    tmp <- paste(i,j, sep = "_")
+    # append(all_ms, tmp) doesn't work
+    all_ms <- c(all_ms, tmp)
+    # print(paste("tmp", tmp))
+  }
+} 
+
+```
+
+# Analizing all the results
+```{r Results, Plots and PDFs}
+# More details https://r-graph-gallery.com/48-grouped-barplot-with-ggplot2
+
+
+pdf("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/03_Deconvolution/Methods_Results")
+for (i in all_ms) {
+  print(i)
+  if(i == "Epidish_BPRNACan"){
+    selected_method_data <- data[rownames(data), grep(i, colnames(data))]
+  }
+  selected_method_data <- data[rownames(data), grep(i, colnames(data))]
+  plot_by_method(selected_method = i, result_file = selected_method_data)
+
+}
+dev.off()
+
+# problem quando grep cerca BPRNACan trova anche BPRNACanPro(met) e BPRNACanProMet quindi nei risultati viene sommato tutto quanto perche si costruisce una tabella con anche le colonne di questi metodi con signature diverse. Provare con un if per escludere proprio i casi sbagliati (in BPRNACan)
+```
+
