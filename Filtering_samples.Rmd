@@ -19,7 +19,7 @@ library(stringr)
 # Functions
 ```{r Functions}
 # Remove version number from ENSEMBL ID
-remove_after_dot <- function(TPM) {
+remove_gene_version <- function(TPM) {
   rownames(TPM) <- rownames(TPM) %>% 
     str_remove("\\..*$") 
   return(as.data.frame(TPM))
@@ -27,7 +27,7 @@ remove_after_dot <- function(TPM) {
 
 
 # Replace ENSEMBL ID with GENE SYMBOL
-ID_to_GENE_SYMBOL <- function(TPM){
+EnsemblID_to_GeneSymbol <- function(TPM){
   entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(TPM), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your TPM 
   TPM <- TPM %>%
     mutate(ENSEMBL = rownames(TPM)) %>% # add a column
@@ -47,9 +47,10 @@ samples_list <- read.table("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/Pa
 
 # Convert ENSEMBL ID with GENE SYMBOL
 ```{r ENSEMBL ID to Gene Symbols}
-BC2_TPM <- remove_after_dot(gexp_tpm)
-BC2_gene_symbols <- ID_to_GENE_SYMBOL(BC2_TPM)
+BC2_TPM <- remove_gene_version(gexp_tpm)
+BC2_gene_symbols <- EnsemblID_to_GeneSymbol(BC2_TPM)
 ```
+
 # Filtering Samples and saving file
 ```{r Loading data}
 BC2_samples <- intersect(colnames(BC2_gene_symbols), samples_list$sample)

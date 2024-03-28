@@ -18,7 +18,6 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(tibble)
 library(org.Hs.eg.db) # Homo sapiens db
-library(ADImpute) # to normalize with gene lenght
 library(RColorBrewer) # for plot
 library(pheatmap) # for heatmaps
 library(ADImpute) # This package provides functions to compute TPM
@@ -32,7 +31,7 @@ library(ADImpute) # This package provides functions to compute TPM
 # columns(org.Hs.eg.db) # to look at the columns of this db
 
 # Raw counts to TPM
-counts2TPM <- function(raw_counts_file){
+counts_to_TPM <- function(raw_counts_file){
   entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(raw_counts_file), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your raw_counts_file 
   raw_counts_file <- raw_counts_file %>%
     mutate(ENSEMBL = rownames(raw_counts_file)) %>% # add a column
@@ -79,12 +78,14 @@ path <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/01_Raw_Counts/BC2_C
           "/home/francesco.massaini/Desktop/IMMUCAN_data/BC3/01_Raw_Counts/BC3_COUNTS.txt",
           "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC/01_Raw_Counts/NSCLC_COUNTS.txt")
 files_names <- gsub(".txt$", "", basename(path))
-folders_names <- strsplit(files_names, "_")
+folders_names <- strsplit(path, "IMMUCAN_data")
+folders_names <- folders_names[[1]][2]
+folders_names <- strsplit(folders_names, split = files_names)
 
 # EDA
 for (i in 1:length(path)) {
-  counts <- read.table(path[i], header = TRUE,  sep = '	', row.names = 1)
-  TPM <- counts2TPM(counts) 
+  counts <- read.delim(path[i], header = TRUE,  sep = '	', row.names = 1)
+  TPM <- counts_to_TPM(counts) 
   pdf(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = 16) # folders_names[[i]][1] double square bracket to access to the i vector, single bracket to access to the first value of the i vector 
   # TPM_Heatmap(TPM)
   # TPM_Sample_dendrogram(TPM)
