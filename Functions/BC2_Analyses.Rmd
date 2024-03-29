@@ -160,11 +160,10 @@ fviz_pca_biplot(pca_result, geom.ind = "point", geom.var = "arrow", col.ind = "c
 
 ```
 
-# TO DO
 ```{r}
- 
-# Analisi Risultati di deconvoluzione in termini di stackable histograms
-# heatmap sui samples e PCA sulla deconvoluzione
+
+# Risultati di deconvoluzione
+# heatmap sui samples e PCA
 
 # CellTFusion
 ```
