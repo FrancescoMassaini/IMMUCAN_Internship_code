@@ -59,7 +59,7 @@ Compute_Samples_dendrogram <- function(TPM){
 ```{r Data Loading and plots}
 # Data Loading
 
-path <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/03_Deconvolution/all_deconvolutions_BC2_filtered_samples.txt")
+path <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/all_deconvolutions_NSCLC2_TPM.txt")
 files_names <- gsub(".txt$", "", basename(path))
 folders_names <- strsplit(path, "IMMUCAN_data")
 folders_names <- folders_names[[1]][2]

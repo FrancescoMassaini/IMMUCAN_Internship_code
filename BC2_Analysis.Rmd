@@ -23,10 +23,10 @@ library(factoextra)
 # Functions
 ```{r Functions}
 # Remove version number from ENSEMBL ID
-remove_gene_version <- function(TPM) {
-  rownames(TPM) <- rownames(TPM) %>% 
+remove_gene_version <- function(df_with_gene_version) {
+  rownames(df_with_gene_version) <- rownames(df_with_gene_version) %>% 
     str_remove("\\..*$") 
-  return(as.data.frame(TPM))
+  return(as.data.frame(df_with_gene_version))
 }
 
 # Converting from ENSEMBL ID to GENE SYMBOL. Use org.Hs.eg.db db 
@@ -87,12 +87,6 @@ folders_names <- strsplit(folders_names, split = files_names)
 samples_list <- read.table("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/Patient_to_include_from_rna_samples_bc2_to_create_custom_cohort.tsv", header = TRUE, sep = "\t")
 
 # for loop in Counts_to_TPM
-
-  # TPM output for GEM-DeCan
-  # TPM_output <- data.frame(TPM) %>%
-  #   rownames_to_column("Genes")
-  # write.table(TPM_output, file = paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_TPM/", files_names[i],"_TPM.txt"), quote = F, sep = "\t", row.names = F)
-
 
 ```
 

@@ -1,0 +1,209 @@
+---
+title: "NSCLC2"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+---
+
+# Imports
+```{r Imports}
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(org.Hs.eg.db) # Homo sapiens db
+library(stringr)
+library(RColorBrewer) # for plot
+library(pheatmap) # for heatmaps
+library(ADImpute) # This package provides functions to compute TPM
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+```
+
+# Functions
+```{r Functions}
+# Remove version number from ENSEMBL ID
+remove_gene_version <- function(df_with_gene_version) {
+  rownames(df_with_gene_version) <- rownames(df_with_gene_version) %>% 
+    str_remove("\\..*$") 
+  return(as.data.frame(df_with_gene_version))
+}
+
+# Converting from ENSEMBL ID to GENE SYMBOL. Use org.Hs.eg.db db 
+EnsemblID_to_GeneSymbol <- function(raw_counts_file){
+  entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(raw_counts_file), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your raw_counts_file 
+  raw_counts_file <- raw_counts_file %>%
+    mutate(ENSEMBL = rownames(raw_counts_file)) %>% # add a column
+    inner_join(., entrz, by="ENSEMBL") %>% # join, merge df with a common column (ENSEMBL)
+    dplyr::filter(!is.na(SYMBOL)) %>%
+    distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
+    column_to_rownames("SYMBOL") %>% 
+    dplyr::select(., -c("ENSEMBL"))
+return(raw_counts_file)  
+}
+
+# Raw counts to TPM. Need GENE SYMBOL!
+counts_to_TPM <- function(raw_counts_file){
+  # log2(TPM+1) 
+  TPM <- ADImpute::NormalizeTPM(raw_counts_file, log = T)
+return(as.data.frame(TPM))  
+}
+
+
+# Plots - Heatmap
+Compute_Samples_Heatmap <- function(TPM){
+  TPM <- as.matrix(TPM)
+  
+  # Utilizes the NormalizeTPM function from the ADImpute package.
+  # Performs normalization on the 'TPM' data frame, considering TPM (Transcripts Per Million) values.
+  # Setting 'log = T' indicates that the normalization will be done using the logarithm of TPM values.
+  # This is often employed to reduce variance and approximate a normal distribution.
+  # Add 1 at the log log(TPM+1) so that 0 values are propertly calculated
+  
+  sampleDists <- dist(t(TPM)) #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
+  sampleDistMatrix <- as.matrix(sampleDists)
+  colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+  pheatmap(sampleDistMatrix,    main = "Samples heatmap", sub="", xlab="",
+       cex.lab = 1, cex.axis = 1, cex.main = 2)
+}
+
+# Plots - Dendrogram
+Compute_Samples_dendrogram <- function(TPM){
+  sampleTree = hclust(dist(t(TPM)), method = "average");
+  plot(sampleTree, main = "Samples dendrogram", sub="", xlab="", 
+       cex.lab = 1, cex.axis = 1, cex.main = 2)
+}
+
+
+```
+
+# Path and folders
+```{r Data loading}
+# Imposta il percorso della cartella
+input_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Raw_Counts/star_counts"
+output_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/star_counts/"
+
+# Ottieni tutti i file .txt nella cartella
+txt_input_files <- list.files(path = input_folder, pattern = "\\.txt$", full.names = TRUE)
+
+# Stampa il contenuto della variabile txt_files
+print(txt_input_files)
+
+files_names <- gsub(".txt$", "", basename(txt_input_files))
+samples_names = str_split_i(files_names, "_", 1)
+
+```
+
+# load and processign data NSCLC2
+```{r Processing Raw Counts}
+
+# Merging all the patients files, filtering rows of input files, removing gene version, and converting to GENE SYMBOLS
+
+merged_counts <- read.delim(txt_input_files[1], header = 0, row.names = 1)
+colnames(merged_counts) <- samples_names[1]
+
+for (i in 2:length(txt_input_files)) {
+  print(i)
+    # Leggi il data frame successivo
+  counts <- read.delim(txt_input_files[i], header = 0, row.names = 1)
+  colnames(counts) <- samples_names[i]
+  print(samples_names[i])
+  # Unisci le colonne del nuovo data frame a merged_counts
+  merged_counts <- cbind(merged_counts, counts)
+}
+  merged_counts <- merged_counts %>%
+    filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>%
+    remove_gene_version() %>%
+    EnsemblID_to_GeneSymbol()
+
+summary(merged_counts) 
+
+# ADImpute to normalize to TPM
+TPM <- counts_to_TPM(merged_counts)
+```
+
+# Analizing TPM
+```{r Distribution}
+# Bar plot to see TPM distribution
+
+TPM_long <- pivot_longer(TPM, cols = 2:ncol(TPM), names_to = "Samples", values_to = "TPM")
+
+# Summary
+summary(TPM)
+
+# Histogram
+ggplot(data = TPM_long, aes(x=TPM)) + 
+  geom_histogram(binwidth = 0.5) +
+  geom_rug(color = "blue") +
+  scale_x_continuous(limits = c(0, max(TPM_long$TPM))) +
+  scale_y_continuous(limits = c(0, 20))
+# scale_y_continuous(limits = c(-100, 800000))
+
+# Jitter plot  
+ggplot(data = TPM_long, aes(x = TPM, y = 0)) +
+  geom_jitter(width = 0, height = 0.1, size = 1, alpha = 0.5) +
+  xlab("TPM") +
+  ylab("")
+```
+```{r Heatmap and dendrogram}
+# Heatmap and dendrogram to see patient outliers
+
+# pdf(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = 16) # folders_names[[i]][1] double square bracket to access to the i vector, single bracket to access to the first value of the i vector 
+Compute_Samples_Heatmap(TPM)
+Compute_Samples_dendrogram(TPM)
+# dev.off()
+
+```
+
+```{r PCA}
+# PCA biplot
+
+pca_result <- PCA(t(TPM), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
+fviz_eig(pca_result)
+fviz_pca_ind(pca_result, geom.ind = "point")
+fviz_pca_biplot(pca_result, geom.ind = "point", geom.var = "arrow", col.ind = "cos2", col.var = "contrib")
+
+```
+
+
+# Preliminary Deconvolution Analisys
+
+```{r Deconvolution}
+# Deconvoltion Data Loading
+input_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
+output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
+txt_input_files_deconvolution <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/all_deconvolutions_NSCLC2_TPM.txt")
+files_names_deconvolution <- gsub(".txt$", "", basename(txt_input_files_deconvolution))
+
+# Sample clustering
+deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
+png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.png"), width = 2000, height = 2000)
+Compute_Samples_Heatmap(t(deconv)) # double t() (here and in the function) to take into account rows
+dev.off()
+
+png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.png"), width = 2000, height = 1000)
+Compute_Samples_dendrogram(t(deconv))
+dev.off()
+
+```
+
+# TO DO
+```{r}
+ 
+# Analisi Risultati di deconvoluzione in termini di stackable histograms
+# heatmap sui samples e PCA sulla deconvoluzione
+
+# CellTFusion
+```
+
+
+# Saving file
+```{r Saving file}
+# Write file in the correct format for deconvolution
+TPM <- rownames_to_column(TPM, "Genes") 
+name <- "NSCLC2" 
+
+write.table(TPM, file = paste0(output_folder, name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
+message(paste0(output_folder, name,"_TPM.txt"))
+```
+
