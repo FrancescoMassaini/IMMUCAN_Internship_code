@@ -50,8 +50,8 @@ return(TPM)
 }
 
 # Plots - Heatmap
-TPM_Heatmap <- function(TPM){
-  TPM <- as.matrix(TPM)
+Compute_Samples_Heatmap <- function(df){
+  df <- as.matrix(df)
   
   # Utilizes the NormalizeTPM function from the ADImpute package.
   # Performs normalization on the 'TPM' data frame, considering TPM (Transcripts Per Million) values.
@@ -59,19 +59,19 @@ TPM_Heatmap <- function(TPM){
   # This is often employed to reduce variance and approximate a normal distribution.
   # Add 1 at the log log(TPM+1) so that 0 values are propertly calculated
   
-  sampleDists <- dist(t(TPM)) #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
+  sampleDists <- dist(t(df), method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
   sampleDistMatrix <- as.matrix(sampleDists)
   colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-  pheatmap(sampleDistMatrix,    main = "Sample clustering to detect outliers", sub="", xlab="",
-       cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+  pheatmap(sampleDistMatrix,    main = "Samples heatmap", sub="", xlab="",
+       cex.lab = 1, cex.axis = 1, cex.main = 2, clustering_method = 'complete')
 }
 
 # Plots - Dendrogram
-TPM_Sample_dendrogram <- function(TPM){
-  sampleTree = hclust(dist(t(TPM)), method = "average");
-  plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+Compute_Samples_dendrogram <- function(df){
+  sampleTree = hclust(dist(t(df), method = 'euclidean'), method = "complete");
+  plot(sampleTree, main = "Samples dendrogram", sub="", xlab="", 
+       cex.lab = 1, cex.axis = 1, cex.main = 2)
 }
-
 
 ```
 
@@ -118,7 +118,7 @@ files_names[1] = "BC2_TPM" # Change file name manually if you need
 BC2_long <- pivot_longer(BC2, cols = 2:ncol(BC2), names_to = "Samples", values_to = "TPM")
 
 # Summary
-summary(dplyr::select(BC2, !Genes))
+# summary(dplyr::select(BC2, !Genes))
 
 # Histogram
 ggplot(data = BC2_long, aes(x=TPM)) + 
@@ -136,22 +136,23 @@ ggplot(data = BC2_long, aes(x = TPM, y = 0)) +
 ```
 ```{r Heatmap and dendrogram}
 # Heatmap and dendrogram to see patient outliers
-
-# pdf(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = 16) # folders_names[[i]][1] double square bracket to access to the i vector, single bracket to access to the first value of the i vector 
+png(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = 16)
+png(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = ) # folders_names[[i]][1] double square bracket to access to the i vector, single bracket to access to the first value of the i vector 
 TPM_Heatmap(BC2)
+dev.off()
+
 TPM_Sample_dendrogram(BC2)
-# dev.off()
+
 
 ```
 
 ```{r PCA}
-# PCA biplot
+# PCA biplot on TPM
 
 pca_result <- PCA(t(BC2), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
 fviz_eig(pca_result)
 fviz_pca_ind(pca_result, geom.ind = "point")
-fviz_pca_biplot(pca_result, geom.ind = "point", geom.var = "arrow", col.ind = "cos2", col.var = "contrib")
-
+factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
 ```
 
 # TO DO

@@ -51,8 +51,8 @@ return(as.data.frame(TPM))
 
 
 # Plots - Heatmap
-Compute_Samples_Heatmap <- function(TPM){
-  TPM <- as.matrix(TPM)
+Compute_Samples_Heatmap <- function(df){
+  df <- as.matrix(df)
   
   # Utilizes the NormalizeTPM function from the ADImpute package.
   # Performs normalization on the 'TPM' data frame, considering TPM (Transcripts Per Million) values.
@@ -60,16 +60,16 @@ Compute_Samples_Heatmap <- function(TPM){
   # This is often employed to reduce variance and approximate a normal distribution.
   # Add 1 at the log log(TPM+1) so that 0 values are propertly calculated
   
-  sampleDists <- dist(t(TPM)) #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
+  sampleDists <- dist(t(df), method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
   sampleDistMatrix <- as.matrix(sampleDists)
   colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
   pheatmap(sampleDistMatrix,    main = "Samples heatmap", sub="", xlab="",
-       cex.lab = 1, cex.axis = 1, cex.main = 2)
+       cex.lab = 1, cex.axis = 1, cex.main = 2, clustering_method = 'complete')
 }
 
 # Plots - Dendrogram
-Compute_Samples_dendrogram <- function(TPM){
-  sampleTree = hclust(dist(t(TPM)), method = "average");
+Compute_Samples_dendrogram <- function(df){
+  sampleTree = hclust(dist(t(df), method = 'euclidean'), method = "complete");
   plot(sampleTree, main = "Samples dendrogram", sub="", xlab="", 
        cex.lab = 1, cex.axis = 1, cex.main = 2)
 }
@@ -81,7 +81,7 @@ Compute_Samples_dendrogram <- function(TPM){
 ```{r Data loading}
 # Imposta il percorso della cartella
 input_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Raw_Counts/star_counts"
-output_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/star_counts/"
+output_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/"
 
 # Ottieni tutti i file .txt nella cartella
 txt_input_files <- list.files(path = input_folder, pattern = "\\.txt$", full.names = TRUE)
@@ -116,21 +116,16 @@ for (i in 2:length(txt_input_files)) {
     remove_gene_version() %>%
     EnsemblID_to_GeneSymbol()
 
-summary(merged_counts) 
-
 # ADImpute to normalize to TPM
 TPM <- counts_to_TPM(merged_counts)
 ```
 
 # Analizing TPM
 ```{r Distribution}
-# Bar plot to see TPM distribution
-
-TPM_long <- pivot_longer(TPM, cols = 2:ncol(TPM), names_to = "Samples", values_to = "TPM")
-
 # Summary
 summary(TPM)
 
+TPM_long <- pivot_longer(TPM, cols = 2:ncol(TPM), names_to = "Samples", values_to = "TPM")
 # Histogram
 ggplot(data = TPM_long, aes(x=TPM)) + 
   geom_histogram(binwidth = 0.5) +
@@ -145,29 +140,36 @@ ggplot(data = TPM_long, aes(x = TPM, y = 0)) +
   xlab("TPM") +
   ylab("")
 ```
+# TPM Analysis
 ```{r Heatmap and dendrogram}
-# Heatmap and dendrogram to see patient outliers
+# Heatmap and dendrogram to see patient outliers on TPM
 
-# pdf(paste0("../IMMUCAN_data/", folders_names[[i]][1], "/02_Plot_Outliers/", files_names[i],"_outliers"), width = 16) # folders_names[[i]][1] double square bracket to access to the i vector, single bracket to access to the first value of the i vector 
+output_folder_TPM_outlier <- paste0(str_split_i(output_folder, "02_TPM/", 1), "02_Plot_Outliers/")
+
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.pdf"), width = 16, height = 16)
+png(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.png"), width = 2000, height = 2000)
 Compute_Samples_Heatmap(TPM)
-Compute_Samples_dendrogram(TPM)
+dev.off()
 # dev.off()
 
-```
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"))
+png(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.png"), width = 2000, height = 1000)
+Compute_Samples_dendrogram(TPM)
+dev.off()
+# dev.off()
 
-```{r PCA}
-# PCA biplot
+# PCA biplot on TPM
 
 pca_result <- PCA(t(TPM), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
 fviz_eig(pca_result)
-fviz_pca_ind(pca_result, geom.ind = "point")
-fviz_pca_biplot(pca_result, geom.ind = "point", geom.var = "arrow", col.ind = "cos2", col.var = "contrib")
 
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
+png(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.png"))
+factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+dev.off()
+# dev.off()
 ```
-
-
-# Preliminary Deconvolution Analisys
-
+# Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
 ```{r Deconvolution}
 # Deconvoltion Data Loading
 input_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
@@ -175,15 +177,30 @@ output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NS
 txt_input_files_deconvolution <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/all_deconvolutions_NSCLC2_TPM.txt")
 files_names_deconvolution <- gsub(".txt$", "", basename(txt_input_files_deconvolution))
 
-# Sample clustering
 deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
+
+# Sample clustering
+# pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.pdf"), width = 2000, height = 2000)
 png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.png"), width = 2000, height = 2000)
 Compute_Samples_Heatmap(t(deconv)) # double t() (here and in the function) to take into account rows
 dev.off()
+# dev.off()
 
+# pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.pdf"), width = 2000, height = 2000)
 png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.png"), width = 2000, height = 1000)
 Compute_Samples_dendrogram(t(deconv))
 dev.off()
+# dev.off()
+
+# PCA
+pca_result <- PCA(deconv, scale.unit = TRUE, graph = FALSE) # t(deconv) because PCA takes rows 
+fviz_eig(pca_result)
+
+# pdf(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.pdf"))
+png(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.png"))
+factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+dev.off()
+# dev.off()
 
 ```
 
@@ -203,7 +220,7 @@ dev.off()
 TPM <- rownames_to_column(TPM, "Genes") 
 name <- "NSCLC2" 
 
-write.table(TPM, file = paste0(output_folder, name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
+write.table(TPM, file = paste0(output_folder, "star_counts/", name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
 message(paste0(output_folder, name,"_TPM.txt"))
 ```
 
