@@ -75,6 +75,24 @@ Compute_Samples_dendrogram <- function(df){
 }
 
 
+# Correlation
+cors <- function(df) {
+  M <- Hmisc::rcorr(as.matrix(df))
+  Mdf <- map(M, ~data.frame(.x))
+  return(Mdf)
+}
+
+formatted_cors <- function(df){
+  cors(df) %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2", values_to = "value")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+}
+
 ```
 
 # Path and folders
@@ -87,7 +105,7 @@ output_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/"
 txt_input_files <- list.files(path = input_folder, pattern = "\\.txt$", full.names = TRUE)
 
 # Stampa il contenuto della variabile txt_files
-print(txt_input_files)
+# print(txt_input_files)
 
 files_names <- gsub(".txt$", "", basename(txt_input_files))
 samples_names = str_split_i(files_names, "_", 1)
@@ -103,11 +121,11 @@ merged_counts <- read.delim(txt_input_files[1], header = 0, row.names = 1)
 colnames(merged_counts) <- samples_names[1]
 
 for (i in 2:length(txt_input_files)) {
-  print(i)
+  # print(i)
     # Leggi il data frame successivo
   counts <- read.delim(txt_input_files[i], header = 0, row.names = 1)
   colnames(counts) <- samples_names[i]
-  print(samples_names[i])
+  # print(samples_names[i])
   # Unisci le colonne del nuovo data frame a merged_counts
   merged_counts <- cbind(merged_counts, counts)
 }
@@ -128,10 +146,10 @@ summary(TPM)
 TPM_long <- pivot_longer(TPM, cols = 2:ncol(TPM), names_to = "Samples", values_to = "TPM")
 # Histogram
 ggplot(data = TPM_long, aes(x=TPM)) + 
-  geom_histogram(binwidth = 0.5) +
+  geom_histogram(binwidth = 0.05) +
   geom_rug(color = "blue") +
   scale_x_continuous(limits = c(0, max(TPM_long$TPM))) +
-  scale_y_continuous(limits = c(0, 20))
+  scale_y_continuous(limits = c(0, 100000))
 # scale_y_continuous(limits = c(-100, 800000))
 
 # Jitter plot  
@@ -158,6 +176,7 @@ Compute_Samples_dendrogram(TPM)
 dev.off()
 # dev.off()
 
+
 # PCA biplot on TPM
 
 pca_result <- PCA(t(TPM), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
@@ -174,7 +193,7 @@ dev.off()
 # Deconvoltion Data Loading
 input_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
 output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
-txt_input_files_deconvolution <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/all_deconvolutions_NSCLC2_TPM.txt")
+txt_input_files_deconvolution <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/all_deconvolutions_NSCLC2_TPM_noCD226_signatureCLLpatient3.txt")
 files_names_deconvolution <- gsub(".txt$", "", basename(txt_input_files_deconvolution))
 
 deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
@@ -204,6 +223,50 @@ dev.off()
 
 ```
 
+# Benchmark of deconvolution results vs mIF data
+```{r Correlation mIF}
+# loading mIF files and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
+IF <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", header = 1, row.names = 1) %>%
+  dplyr::select(-Tumor_count)
+rownames(IF) <- rownames(IF) %>% 
+  str_remove_all("-IF1-01")
+  
+rownames(deconv) <- rownames(deconv) %>%
+  str_remove_all(pattern = ".RNA.01|.RNA.02|.RNA.04")
+
+# Keeping only common patients and subsetting deconv and IF 
+common_patients <- intersect(rownames(IF), rownames(deconv))
+IF_common <- IF[common_patients,]
+deconv_common <- deconv[common_patients,]
+
+# Dividing all_markers from cell_types  
+IF_cell_types <- IF_common[,1:9]
+IF_markers <- IF_common[,10:15]
+
+merged_df <- cbind(IF_cell_types, deconv_common)
+
+# Correlation df formatted for ggplot
+prova <- formatted_cors(merged_df)
+
+formatted_cors(merged_df) %>%
+  ggplot(aes(measure1, measure2, fill=r, label=round(r_if_sig,2))) +
+  geom_tile() +
+  labs(x = NULL, y = NULL, fill = "Pearson's\nCorrelation", title="Correlations in Mtcars",
+       subtitle="Only significant Pearson's correlation coefficients shown") +
+  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+  geom_text() +
+  theme_classic() +
+  scale_x_discrete(expand=c(0,0)) +
+  scale_y_discrete(expand=c(0,0)) +
+  theme(text=element_text(family="Roboto"))
+
+
+
+ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
+  geom_point() +
+  geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
+```
+
 # TO DO
 ```{r}
  
@@ -220,7 +283,7 @@ dev.off()
 TPM <- rownames_to_column(TPM, "Genes") 
 name <- "NSCLC2" 
 
-write.table(TPM, file = paste0(output_folder, "star_counts/", name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
+write.table(TPM, file = paste0(output_folder, name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
 message(paste0(output_folder, name,"_TPM.txt"))
 ```
 
