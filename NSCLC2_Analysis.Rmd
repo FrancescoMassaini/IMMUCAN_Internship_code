@@ -18,6 +18,11 @@ library(ADImpute) # This package provides functions to compute TPM
 library(ggplot2)
 library(FactoMineR)
 library(factoextra)
+library(survival)
+library(ranger)
+library(ggfortify)
+library(rlang)
+
 ```
 
 # Functions
@@ -188,8 +193,9 @@ factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5
 dev.off()
 # dev.off()
 ```
-# Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
-```{r Deconvolution}
+
+# Deconvoltion Data Loading
+```{r Loading Deconvolution}
 # Deconvoltion Data Loading
 input_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
 output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/"
@@ -198,6 +204,10 @@ files_names_deconvolution <- gsub(".txt$", "", basename(txt_input_files_deconvol
 
 deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
 
+```
+
+# Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
+```{r Deconvolution}
 # Sample clustering
 # pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.pdf"), width = 2000, height = 2000)
 png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.png"), width = 2000, height = 2000)
@@ -226,27 +236,53 @@ dev.off()
 # Benchmark of deconvolution results vs mIF data
 ```{r Correlation mIF}
 # loading mIF files and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
-IF <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", header = 1, row.names = 1) %>%
-  dplyr::select(-Tumor_count)
-rownames(IF) <- rownames(IF) %>% 
+IF1 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", header = 1, row.names = 1)
+rownames(IF1) <- rownames(IF1) %>% 
   str_remove_all("-IF1-01")
+
+IF2 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_fraction.csv", header = 1, row.names = 1)
+rownames(IF2) <- rownames(IF2) %>% 
+  str_remove_all("-IF2-01")
+
+IF3 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_fraction.csv", header = 1, row.names = 1)
+rownames(IF3) <- rownames(IF3) %>% 
+  str_remove_all("-IF3-01")
   
 rownames(deconv) <- rownames(deconv) %>%
   str_remove_all(pattern = ".RNA.01|.RNA.02|.RNA.04")
 
+
 # Keeping only common patients and subsetting deconv and IF 
-common_patients <- intersect(rownames(IF), rownames(deconv))
-IF_common <- IF[common_patients,]
+common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3), rownames(deconv)))
+IF1_common <- IF1[common_patients,]
+IF2_common <- IF2[common_patients,]
+IF3_common <- IF3[common_patients,]
 deconv_common <- deconv[common_patients,]
 
-# Dividing all_markers from cell_types  
-IF_cell_types <- IF_common[,1:9]
-IF_markers <- IF_common[,10:15]
+# # Dividing all_markers from cell_types  
+# IF_cell_types <- IF_common[,1:9]
+# IF_markers <- IF_common[,10:15]
 
-merged_df <- cbind(IF_cell_types, deconv_common)
+merged_df <- cbind(IF1_common, IF2_common, IF3_common, deconv_common)
+save(merged_df, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/all_IFs_deconv.RData")
 
 # Correlation df formatted for ggplot
-prova <- formatted_cors(merged_df)
+
+correlation_matrix = cor(merged_df)
+save(correlation_matrix, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/correlation_matrix.RData")
+
+corr_mat_adjusted <- correlation_matrix
+corr_mat_adjusted[corr_mat_adjusted <= 0.6] <- NA
+image(corr_mat_adjusted)
+
+corr_mat_adjusted <- correlation_matrix
+corr_mat_adjusted[corr_mat_adjusted <= 0.7] <- NA
+image(corr_mat_adjusted)
+
+corr_mat_adjusted <- correlation_matrix
+corr_mat_adjusted[corr_mat_adjusted <= 0.8] <- NA
+image(corr_mat_adjusted)
+
 
 formatted_cors(merged_df) %>%
   ggplot(aes(measure1, measure2, fill=r, label=round(r_if_sig,2))) +
@@ -260,12 +296,187 @@ formatted_cors(merged_df) %>%
   scale_y_discrete(expand=c(0,0)) +
   theme(text=element_text(family="Roboto"))
 
+ggsave(filename = paste0(output_folder_deconvolution, "deconvolution_vs_IF1.png"), plot = last_plot(), width = 20, height = 20)
+
 
 
 ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
   geom_point() +
   geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
+
+
 ```
+
+# Deconvolution results of BPRNACan3DProMet_M2 vs ALL clinical data 
+```{r BPRNACan3DProMet_M2}
+# loading clinical file and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
+clinical <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv", header = 1) %>%
+  column_to_rownames(var = "immucan_id")
+  
+rownames(deconv) <- rownames(deconv) %>%
+  str_remove_all(pattern = "-FIXT-01-RNA-01|-FIXT-01-RNA-02")
+
+# Keeping only common patients and subsetting deconv and IF 
+common_patients <- intersect(rownames(clinical), rownames(deconv))
+clinical_common <- clinical[common_patients,] %>%
+  dplyr::select(death, gender, stage, side_localization, smoking_status, neo_adjuvant_treatment, adjuvant_treatment, type_of_adj_trt, metastatic_treatment, simple_histology, simple_stage, primary_localization, long_survivors, T_stage, M_stage, N_stage, primary_tumor_size, TIL_score)
+deconv_common <- deconv[common_patients, ] %>%
+  dplyr::select(grep("*._BPRNACan3DProMet_M2|CBSX_LM22_Macrophages_M2", colnames(deconv)))
+
+
+merged_df_clinical <- cbind(clinical_common, deconv_common)
+merged_df_clinical[1:18] <- lapply(merged_df_clinical[1:18], factor)
+
+for (i in colnames(merged_df_clinical)[19:ncol(merged_df_clinical)]) {
+  for (j in colnames(merged_df_clinical)[1:18]) {
+    if (is.factor(merged_df_clinical[[j]]) && is.numeric(merged_df_clinical[[i]])) {
+      data_no_na <- na.omit(merged_df_clinical[, c(i, j)])
+      
+      if (length(unique(data_no_na[[j]])) > 2) {
+        # ANOVA
+        formula <- as.formula(paste(i, "~", j))
+        test_result <- aov(formula, data = data_no_na)
+        summary_result <- summary(test_result)
+        p_value <- round(summary_result[[1]]$'Pr(>F)'[1], digit = 3)
+      } else {
+        # Test t
+        formula <- as.formula(paste(i, "~", j))
+        test_result <- t.test(formula, data = data_no_na)
+        p_value <- round(test_result$p.value, digit = 3)
+      }
+      
+      # Grafico
+      plot <- ggplot(data_no_na, aes_string(x = j, y = i, fill = j)) +
+        geom_violin() +
+        labs(title = paste("Violin plot of", i, "by", j), subtitle = paste("p-value:", p_value)) +
+        theme(axis.text.x = element_text(angle = 90))
+      
+      
+      
+       if(p_value<0.08) print(plot)
+    }
+  }
+}
+
+
+clinical_common2 <- clinical[common_patients,] %>%
+  dplyr::select(death, time_to_event, age_at_registration, age_at_diagnosis, average_number_of_cigarettes, number_of_years, tumor_area_mm_square)
+merged_df_clinical2 <- cbind(clinical_common2, deconv_common)
+
+merged_df_clinical2 = mutate(merged_df_clinical2, death = ifelse(death == "Yes", 1, 0))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_Epidish = ifelse(Epidish_BPRNACan3DProMet_M2 > median(Epidish_BPRNACan3DProMet_M2, na.rm = TRUE), "H", "L"))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_DeconRNASeq = ifelse(DeconRNASeq_BPRNACan3DProMet_M2 > median(DeconRNASeq_BPRNACan3DProMet_M2, na.rm = TRUE), "H", "L"))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_CBSX_BPRNACan = ifelse(CBSX_BPRNACan3DProMet_M2 > median(CBSX_BPRNACan3DProMet_M2, na.rm = TRUE), "H", "L"))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_CBSX_LM22 = ifelse(CBSX_LM22_Macrophages_M2 > median(CBSX_LM22_Macrophages_M2, na.rm = TRUE), "H", "L"))
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_Epidish, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+if(p_value < 0.05) autoplot(km_trt_fit)
+print(p_value)
+
+
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_DeconRNASeq, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+if(p_value < 0.05) autoplot(km_trt_fit)
+print(p_value)
+
+
+
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_CBSX_BPRNACan, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+if(p_value < 0.05) autoplot(km_trt_fit)
+print(p_value)
+
+
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_CBSX_LM22, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+# if(p_value < 0.05) 
+autoplot(km_trt_fit)
+print(p_value)
+
+
+ggplot(merged_df_clinical2, aes(x=time_to_event, y=Epidish_BPRNACan3DProMet_M2)) +
+  geom_point() +
+  geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
+
+# long_df <- pivot_longer(merged_df_clinical, 
+#                         cols = -death,                         
+#                         names_to = "variable", 
+#                         values_to = "value")
+
+# ggplot(long_df, aes(x = variable, y = value, fill=death)) +
+#   geom_violin() +
+#   scale_y_continuous(limits = c(-0.0001, 0.0020)) + # Sostituisci ymin e ymax con i valori desiderati
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+# Deconvolution results of BPRNACan3DProMet_M2 vs ALL clinical data
+```{r BPRNACan3DProMet_M2}
+# loading clinical file and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
+clinical <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv", header = 1) %>%
+  column_to_rownames(var = "immucan_id")
+  
+rownames(deconv) <- rownames(deconv) %>%
+  str_remove_all(pattern = "-FIXT-01")
+
+# Keeping only common patients and subsetting deconv and IF 
+common_patients <- intersect(rownames(clinical), rownames(deconv))
+clinical_common <- clinical[common_patients,]
+
+deconv_common <- deconv[common_patients, ] %>%
+  dplyr::select(grep("*._BPRNACan3DProMet_M2", colnames(deconv)))
+
+
+merged_df_clinical <- cbind(clinical_common, deconv_common)
+
+long_df <- pivot_longer(merged_df_clinical, 
+                        cols = -death,                         
+                        names_to = "variable", 
+                        values_to = "value")
+
+for (i in colnames(merged_df_clinical[,-1])){
+  print(
+  ggplot(merged_df_clinical, aes(x = death, y = !!sym(i), fill=death)) +
+    geom_violin() +
+    ggtitle(paste("Violin plot of", i))
+  )
+}
+
+# ggplot(long_df, aes(x = variable, y = value, fill=death)) +
+#   geom_violin() +
+#   scale_y_continuous(limits = c(-0.0001, 0.0020)) + # Sostituisci ymin e ymax con i valori desiderati
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+
+
+
+
+
 
 # TO DO
 ```{r}
@@ -286,4 +497,3 @@ name <- "NSCLC2"
 write.table(TPM, file = paste0(output_folder, name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
 message(paste0(output_folder, name,"_TPM.txt"))
 ```
-
