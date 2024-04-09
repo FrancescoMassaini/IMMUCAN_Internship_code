@@ -14,13 +14,13 @@ Input files
 # read_csv() and read_tsv() are special cases of the more general read_delim()
 # read.table() Reads a file in table format and creates a data frame from it, with cases corresponding to lines and variables to fields in the file.
 
-counts.norm = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM.txt", row.names = 1)
+counts.norm = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC1/02_TPM/Mounim/NSCLC1_IMMUcan_tpm_080424.csv", row.names = 1)
 
 # Il risultato di questo processo è un dataframe dove la prima riga del file originale diventa l'insieme dei nomi delle colonne, e i valori nella prima colonna del file diventano i nomi delle righe del dataframe, facilitando l'accesso e la manipolazione dei dati in analisi successive.
 
 # clinical =
 
-deconv = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/all_deconvolutions_NSCLC2_TPM_noCD226_signatureCLLpatient3.txt", row.names = 1) 
+deconv = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC1/03_Deconvolution/Mounim/all_deconvolution_NSCLC1_IMMUcan_tpm_080424.csv", row.names = 1) 
 ```
 
 CellTFusion
