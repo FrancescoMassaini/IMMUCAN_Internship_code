@@ -85,6 +85,9 @@ Compute_Samples_dendrogram <- function(df){
 cors <- function(df, cor_type) {
   M <- Hmisc::rcorr(as.matrix(df), type = cor_type)
   Mdf <- map(M, ~data.frame(.x))
+  colnames(Mdf[[1]]) <- colnames(M[[1]])
+  colnames(Mdf[[2]]) <- colnames(M[[1]])
+  colnames(Mdf[[3]]) <- colnames(M[[1]])
   return(Mdf)
 }
 
@@ -92,30 +95,28 @@ compute_correlation <- function(deconv_path, imaging_path, imaging_pattern_to_re
   
   # Load the data and clean the row names
   imaging <- import(imaging_path)
-  
   rownames(imaging) <- imaging[,1] 
   imaging <- imaging[,-1]
   
   if(imaging_pattern_to_remove != "") rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = imaging_pattern_to_remove)
   
-  View(imaging)
-  
   deconv <- import(deconv_path)
-  
   rownames(deconv) <- deconv[,1]
   deconv <- deconv[,-1]
-  
+
   if(deconv_pattern_to_remove != "") rownames(deconv) <- str_remove_all(string = rownames(deconv), pattern = deconv_pattern_to_remove)
-  
-  View(deconv)  
   
   # Find common patients between deconvolution data and the imaging dataset
   common_patients <- intersect(rownames(deconv), rownames(imaging))
-  
+
   # Subset the data for common patients
   imaging_common <- imaging[common_patients,]
+  col_clust_imaging <- hclust(dist(t(imaging[,-1]), method = "euclidean"))
   deconv_common <- deconv[common_patients, ]
+  col_clust_deconv <- hclust(dist(t(deconv), method = "euclidean"))
   
+  imaging_common <- imaging_common[, col_clust_imaging$order]
+  deconv_common <- deconv_common[, col_clust_deconv$order]
   # Merge the datasets
   merged_df <- cbind(imaging_common, deconv_common)
   colnames(merged_df) <- make.unique(colnames(merged_df))
@@ -157,14 +158,16 @@ compute_correlation <- function(deconv_path, imaging_path, imaging_pattern_to_re
   high_corr_pairs_Mixed <- filter(high_corr_pairs_filtered, (ID1 == imaging_type & ID2 == deconv_type)|(ID1 == deconv_type & ID2 == imaging_type)) %>%
     arrange(desc(Corr))
   
-  return(high_corr_pairs_Mixed)
+  final_list <- list(high_corr_pairs_Mixed, high_corr_pairs_deconv, high_corr_pairs_imaging, high_corr_pairs_filtered, corr_mat_adjusted, merged_df)
+  
+  return(final_list)
 }
 
-plot_correlation_matrix <- function(high_corr_pairs, cor_type, file_name, x_label, y_label) {
+plot_correlation_matrix <- function(high_corr_pairs, cor_type, file_name, output_folder, save_png = T, x_label, y_label, png_width = 10, png_height = 10, significance_level = 0.05, low_corr_threshold = -0.5, high_corr_threshold = 0.5) {
   ggplot(data = high_corr_pairs, aes(x = Feature1, y = Feature2, fill = Corr, label = round(Corr, 2))) +
     geom_tile() +
     labs(fill = paste0(cor_type, "'s\nCorrelation"), title = paste("Correlations", y_label ,"Features vs", x_label),
-         subtitle = paste0("Only significant ", cor_type, "'s correlation coefficients shown")) +
+         subtitle = paste0("Only significant ", cor_type, "'s correlation coefficients shown.\nSignificance level: ", significance_level, ". Low corr threshold: ", low_corr_threshold, ". High corr threshold: ", high_corr_threshold)) +
     scale_fill_gradient2(mid = "#FBFEF9", low = "#0C6291", high = "#A63446", limits = c(-1, 1)) +
     geom_text() +
     theme_classic() +
@@ -174,17 +177,24 @@ plot_correlation_matrix <- function(high_corr_pairs, cor_type, file_name, x_labe
     xlab(x_label) + 
     ylab(y_label)
   
-  # Save the plot
-  ggsave(filename = file_name, plot = last_plot(), width = 10, height = 10)
-  message(paste("File saved in", file_name))
+  if (save_png == T){
+    # Save the plot
+    ggsave(filename = paste0(output_folder, file_name, "_" , cor_type, ".png"), plot = last_plot(), width = png_width, height = png_height)
+    message(paste("File saved in", file_name))  
+  }
 }
+
 ```
 
 # Path and folders
 ```{r Data loading}
 # Imposta il percorso della cartella
 input_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Raw_Counts/star_counts"
-output_folder <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/"
+output_folder_TPM <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/"
+output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
+output_folder_CellTFusion <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/" 
+
+
 
 # Ottieni tutti i file .txt nella cartella
 txt_input_files <- list.files(path = input_folder, pattern = "\\.txt$", full.names = TRUE)
@@ -316,12 +326,7 @@ dev.off()
 
 # Benchmark of deconvolution results vs mIF data
 ```{r Correlation Deconv vs mIF}
-
-# TO DO MAKE AN UNIQUE FILE of IFs
-
-# loading mIF files and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
-deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
-
+# loading mIF FRACTION files and using the same patient names convention.  
 IF1 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", header = 1, row.names = 1)
 rownames(IF1) <- rownames(IF1) %>% 
   str_remove_all("-IF1-01")
@@ -333,223 +338,169 @@ rownames(IF2) <- rownames(IF2) %>%
 IF3 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_fraction.csv", header = 1, row.names = 1)
 rownames(IF3) <- rownames(IF3) %>% 
   str_remove_all("-IF3-01")
+
+# Keeping only common patients and saving the file
+common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3))) # Redcue beacuse to apply intersect on more sets, you should reduce the common intersection progressively
+IFs <- cbind(IF1[common_patients,], IF2[common_patients,], IF3[common_patients,])
+
+# write.csv(IFs, "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv")
+
+
+# Computing correlation between Deconvolution features and imaging
+corr_method <- "spearman"
+imaging <- "mIFs"
+Deconv <- "Deconv"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs_all_", imaging, sep = "_"),
+                        output_folder = output_folder_deconvolution,
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = Deconv, 
+                        png_width = 20,
+                        png_height = 20,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
+
+pdf(file = paste0(output_folder_deconvolution,"scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+for (i in 1:nrow(corr_results[[1]])){
+  if (i %% 2 == 1) {
+    par(mfrow=c(2,1))
+  }
   
-rownames(deconv) <- rownames(deconv) %>%
-  str_remove_all(pattern = "-RNA-01|-RNA-02|-RNA-04")
+  x = dplyr::select(corr_results[[6]], corr_results[[1]][i,"Feature1"]) 
+  y = dplyr::select(corr_results[[6]], corr_results[[1]][i,"Feature2"]) 
+
+  plot(x[,1], y[,1], main = "Scatter Plot", xlab = corr_results[[1]][i,"Feature1"], ylab = corr_results[[1]][i,"Feature2"])
+
+  # Calcola il modello di regressione lineare
+  model <- lm(y[,1] ~ x[,1])
+  r = summary(model)$r.squared
+  
+  # Aggiungi la linea di regressione al plot
+  abline(model, col = "red")
+  text(x = max(x) * 0.7, y = max(y), labels = paste("R^2 =", round(r, 2)), col = "red")
+  
+  if (i == nrow(corr_results[[1]]) && i %% 2 == 1) {
+    dev.off()
+  }
+}
+dev.off()
 
 
-# Keeping only common patients and subsetting deconv and IF 
-common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3), rownames(deconv))) # Redcue beacuse to apply intersect on more sets, you should reduce the common intersection progressively
-IF1_common <- IF1[common_patients,]
-IF2_common <- IF2[common_patients,]
-IF3_common <- IF3[common_patients,]
-deconv_common <- deconv[common_patients,]
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_deconvolution, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
 
-# # Dividing all_markers from cell_types  
-# IF_cell_types <- IF_common[,1:9]
-# IF_markers <- IF_common[,10:15]
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
 
-# Merging all the mIF files
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
 
-merged_df <- cbind(IF1_common, IF2_common, IF3_common, deconv_common)
-colnames(merged_df) <- make.unique(colnames(merged_df)) # ensure unique colnames to easily access to data
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
 
-# all vs all Correlation and image
-cor_type <- "spearman"
-correlation_matrix = cors(merged_df, cor_type)
-
-
-corr_mat_adjusted <- correlation_matrix
-corr_mat_adjusted[[1]][corr_mat_adjusted[[3]] >= 0.05] <- NA
-# Nella sintassi result[[1]][result[[3]] >= 0.05] <- NA, stiamo applicando una logica vettorizzata. Ecco cosa succede passo per passo:
-# 
-# Accesso ai Dataframe: result[[1]] e result[[3]] accedono rispettivamente al primo e al terzo elemento della lista result. In R, le liste sono strutture dati che possono contenere oggetti di vario tipo, inclusi i dataframe. L'operatore [[ ]] viene usato per accedere agli elementi di una lista.
-# 
-# Condizione Vettorizzata: result[[3]] >= 0.05 crea un vettore logico della stessa dimensione di result[[3]], dove ogni elemento è TRUE se il corrispondente valore di 
-# �
-# p è maggiore o uguale a 0.05, e FALSE altrimenti.
-# 
-# Indicizzazione Logica: Quando usi un vettore logico per indicizzare un dataframe o una matrice, selezioni solo gli elementi per i quali il vettore logico ha valore TRUE. Quindi, result[[1]][result[[3]] >= 0.05] seleziona tutti gli elementi in result[[1]] (i valori di 
-# �
-# r) che corrispondono ai valori di 
-# �
-# p in result[[3]] che sono 
-# ≥
-# 0.05
-# ≥0.05.
-# 
-# Assegnazione: Il <- NA assegna NA a tutti gli elementi selezionati nel passaggio precedente.
-# 
-
-corr_mat_adjusted <- as.matrix(corr_mat_adjusted[[1]])
-corr_mat_adjusted[(corr_mat_adjusted <= 0.6  & corr_mat_adjusted >= -0.6)] <- NA
-image(corr_mat_adjusted)
-
-# Further analyse highly correlated features
-corr_mat_adjusted[corr_mat_adjusted == 1] <- NA
-
-feature1_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,1])
-feature2_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,2])
-
-mIF <- make.unique(c(colnames(IF1_common), colnames(IF2_common), colnames(IF3_common)))
-valid_indices <- feature1_index < feature2_index  # Take only indices which are not symmetric 
-
-corr_values <- mapply(function(r, c) corr_mat_adjusted[r, c], feature1_index, feature2_index) # map a function to store each correlation value 
-
-high_corr_pairs <- data.frame("ID1" = ifelse(rownames(corr_mat_adjusted)[feature1_index] %in% mIF, "IF", "Deconv"), 
-                              "Feature1" = rownames(corr_mat_adjusted)[feature1_index], 
-                              "ID2" = ifelse(colnames(corr_mat_adjusted)[feature2_index] %in% mIF, "IF", "Deconv"), 
-                              "Feature2" = colnames(corr_mat_adjusted)[feature2_index],
-                              "Corr" = corr_values)
-
-high_corr_pairs_filtered <- high_corr_pairs[valid_indices, ]
-
-# Splitting correlation based on where they come from
-high_corr_pairs_IF <- filter(high_corr_pairs_filtered, ID1 == "IF", ID2 == "IF")
-high_corr_pairs_Deconv <- filter(high_corr_pairs_filtered, ID1 == "Deconv", ID2 == "Deconv")
-high_corr_pairs_Mixed <- filter(high_corr_pairs_filtered, (ID1 == "IF" & ID2 == "Deconv")|(ID1 == "Deconv" & ID2 == "IF")) %>%
-  arrange(Corr)
-
-ggplot(data = high_corr_pairs_Mixed, aes(Feature1, Feature2, fill=Corr, label=round(Corr,2))) +
-  geom_tile() +
-  labs(x = NULL, y = NULL, fill = paste0(cor_type, "'s\nCorrelation"), title="Correlations Deconvolution Features vs mIF",
-       subtitle=paste0("Only significant ", cor_type, "'s correlation coefficients shown")) +
-  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
-  geom_text() +
-  theme_classic() +
-  scale_x_discrete(expand=c(0,0)) +
-  scale_y_discrete(expand=c(0,0)) +
-  theme(text=element_text(family="Roboto"), axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
-  xlab("mIF") + 
-  ylab("Deconvolution Features")
-
-ggsave(filename = paste0(output_folder_deconvolution, files_names_deconvolution, "deconvolution_vs_mIFs_", cor_type, ".png"), plot = last_plot(), width = 20, height = 20)
-
-
-
-ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
-  geom_point() +
-  geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
 
 ```
 
 # Benchmark of deconvolution results vs IMC data
 ```{r Correlation Deconv vs IMC}
-b <- "spearman"
-imaging = "IF"
-deconv2 = "Deconv"
-a <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt",
-                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_celltype_densities.csv",
+# Computing correlation between Deconvolution features and imaging
+corr_method <- "spearman"
+imaging = "IMC"
+Deconv = "Deconv"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
                          imaging_pattern_to_remove = "",
                          deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01",
-                         significance_level = 0.05,
-                         low_corr_threshold = -0.5,
-                         high_corr_threshold = 0.5,
-                         cor_type = b,
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
                          imaging_type = imaging,
-                         deconv_type = deconv2)
-plot_correlation_matrix(high_corr_pairs = a,
-                        cor_type = b,
-                        file_name = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/prova.png",
+                         deconv_type = Deconv)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs", imaging, sep = "_"),
+                        output_folder = output_folder_deconvolution,
+                        save_png = T,
                         x_label = imaging,
-                        y_label = deconv2)
+                        y_label = Deconv, 
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
 
-# loading mIF files and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
-IMC <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_celltype_densities.csv", header = 1, row.names = 1)
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_deconvolution, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
 
-# Keeping only common patients and subsetting deconv and IF
-rownames(deconv) <-  rownames(deconv) %>%
-  str_remove_all("-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
 
-common_patients <- intersect(rownames(IMC), rownames(CellTFusion))
-IMC_common <- IMC[common_patients,]
-deconv_common <- deconv[common_patients,]
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
 
-# # Dividing all_markers from cell_types  
-# IF_cell_types <- IF_common[,1:9]
-# IF_markers <- IF_common[,10:15]
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
 
-# Merging all the IMC files and CellTFusion result
-merged_df <- cbind(IMC_common, deconv_common)
-colnames(merged_df) <- make.unique(colnames(merged_df)) # ensure unique colnames to easily access to data
-
-
-# all vs all Correlation and image
-cor_type <- "pearson"
-correlation_matrix = cors(merged_df, cor_type)
-
-
-corr_mat_adjusted <- correlation_matrix
-corr_mat_adjusted[[1]][corr_mat_adjusted[[3]] >= 0.05] <- NA
-# Nella sintassi result[[1]][result[[3]] >= 0.05] <- NA, stiamo applicando una logica vettorizzata. Ecco cosa succede passo per passo:
-# 
-# Accesso ai Dataframe: result[[1]] e result[[3]] accedono rispettivamente al primo e al terzo elemento della lista result. In R, le liste sono strutture dati che possono contenere oggetti di vario tipo, inclusi i dataframe. L'operatore [[ ]] viene usato per accedere agli elementi di una lista.
-# 
-# Condizione Vettorizzata: result[[3]] >= 0.05 crea un vettore logico della stessa dimensione di result[[3]], dove ogni elemento è TRUE se il corrispondente valore di 
-# �
-# p è maggiore o uguale a 0.05, e FALSE altrimenti.
-# 
-# Indicizzazione Logica: Quando usi un vettore logico per indicizzare un dataframe o una matrice, selezioni solo gli elementi per i quali il vettore logico ha valore TRUE. Quindi, result[[1]][result[[3]] >= 0.05] seleziona tutti gli elementi in result[[1]] (i valori di 
-# �
-# r) che corrispondono ai valori di 
-# �
-# p in result[[3]] che sono 
-# ≥
-# 0.05
-# ≥0.05.
-# 
-# Assegnazione: Il <- NA assegna NA a tutti gli elementi selezionati nel passaggio precedente.
-# 
-
-corr_mat_adjusted <- as.matrix(corr_mat_adjusted[[1]])
-corr_mat_adjusted[(corr_mat_adjusted <= 0.5  & corr_mat_adjusted >= -0.5)] <- NA
-image(corr_mat_adjusted)
-
-# Further analyse highly correlated features
-corr_mat_adjusted[corr_mat_adjusted == 1] <- NA
-
-feature1_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,1])
-feature2_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,2])
-
-valid_indices <- feature1_index < feature2_index  # Take only indices which are not symmetric 
-
-corr_values <- mapply(function(r, c) corr_mat_adjusted[r, c], feature1_index, feature2_index) # map a function to store each correlation value 
-
-high_corr_pairs <- data.frame("ID1" = ifelse(rownames(corr_mat_adjusted)[feature1_index] %in% colnames(IMC), "IMC", "CellTFusion"), 
-                              "Feature1" = rownames(corr_mat_adjusted)[feature1_index], 
-                              "ID2" = ifelse(colnames(corr_mat_adjusted)[feature2_index] %in% colnames(IMC), "IMC", "CellTFusion"), 
-                              "Feature2" = colnames(corr_mat_adjusted)[feature2_index],
-                              "Corr" = corr_values)
-
-high_corr_pairs_filtered <- high_corr_pairs[valid_indices, ]
-
-# Splitting correlation based on where they come from
-high_corr_pairs_IMC <- filter(high_corr_pairs_filtered, ID1 == "IMC", ID2 == "IMC")
-high_corr_pairs_CellTFusion <- filter(high_corr_pairs_filtered, ID1 == "CellTFusion", ID2 == "CellTFusion")
-high_corr_pairs_Mixed <- filter(high_corr_pairs_filtered, (ID1 == "IMC" & ID2 == "CellTFusion")|(ID1 == "CellTFusion" & ID2 == "IMC")) %>%
-  arrange(desc(Corr))
-
-ggplot(data = high_corr_pairs_Mixed, aes(Feature1, Feature2, fill=Corr, label=round(Corr,2))) +
-  geom_tile() +
-  labs(x = NULL, y = NULL, fill = paste0(cor_type, "'s\nCorrelation"), title="Correlations Deconvolution Features vs mIF",
-       subtitle=paste0("Only significant ", cor_type, "'s correlation coefficients shown")) +
-  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
-  geom_text() +
-  theme_classic() +
-  scale_x_discrete(expand=c(0,0)) +
-  scale_y_discrete(expand=c(0,0)) +
-  theme(text=element_text(family="Roboto"), axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
-  xlab("IMC") + 
-  ylab("Deconvolution Features") 
-
-ggsave(filename = paste0(output_folder_deconvolution, files_names_CellTFusion, "_Deconv_vs_IMC_", cor_type,".png"), plot = last_plot(), width = 10, height = 10)
-message(paste("File saved in", paste0(output_folder_deconvolution, files_names_CellTFusion, "CellTFusion_vs_IMC.png")))
-
-
-# ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
-#   geom_point() +
-#   geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
-
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
 ```
 
 
@@ -688,233 +639,194 @@ CellTFusion <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04
 
 # Benchmark of CellTFusion deconvolution results vs mIF data
 ```{r Correlation CellTFusion vs mIF}
-CellTFusion <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv", header = 1, row.names = 1)
+# Computing correlation between CellTFusion Deconvolution features and imaging
+corr_method <- "spearman"
+imaging = "mIFs"
+Deconv = "CellTFusion"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
 
-output_folder_CellTFusion <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/" 
-files_names_CellTFusion <- gsub(".csv$", "", basename("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv"))
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
 
-# loading mIF files and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
-IF1 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", header = 1, row.names = 1)
-rownames(IF1) <- rownames(IF1) %>% 
-  str_remove_all("-IF1-01")
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs", imaging, sep = "_"),
+                        output_folder = output_folder_CellTFusion,
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = Deconv,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
 
-IF2 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_fraction.csv", header = 1, row.names = 1)
-rownames(IF2) <- rownames(IF2) %>% 
-  str_remove_all("-IF2-01")
 
-IF3 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_fraction.csv", header = 1, row.names = 1)
-rownames(IF3) <- rownames(IF3) %>% 
-  str_remove_all("-IF3-01")
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_CellTFusion, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
+
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
+
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
   
-rownames(CellTFusion) <- rownames(CellTFusion) %>%
-  str_remove_all(pattern = "-RNA-01|-RNA-02|-RNA-04")
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
 
-
-# Keeping only common patients and subsetting deconv and IF 
-common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3), rownames(CellTFusion)))
-IF1_common <- IF1[common_patients,]
-IF2_common <- IF2[common_patients,]
-IF3_common <- IF3[common_patients,]
-CellTFusion_common <- CellTFusion[common_patients,]
-
-# # Dividing all_markers from cell_types  
-# IF_cell_types <- IF_common[,1:9]
-# IF_markers <- IF_common[,10:15]
-
-# Merging all the mIF files
-
-merged_df <- cbind(IF1_common, IF2_common, IF3_common, CellTFusion_common)
-colnames(merged_df) <- make.unique(colnames(merged_df)) # ensure unique colnames to easily access to data
-
-
-# all vs all Correlation and image
-
-cor_type <- "spearman"
-correlation_matrix = cors(merged_df, cor_type)
-
-
-corr_mat_adjusted <- correlation_matrix
-corr_mat_adjusted[[1]][corr_mat_adjusted[[3]] >= 0.05] <- NA
-# Nella sintassi result[[1]][result[[3]] >= 0.05] <- NA, stiamo applicando una logica vettorizzata. Ecco cosa succede passo per passo:
-# 
-# Accesso ai Dataframe: result[[1]] e result[[3]] accedono rispettivamente al primo e al terzo elemento della lista result. In R, le liste sono strutture dati che possono contenere oggetti di vario tipo, inclusi i dataframe. L'operatore [[ ]] viene usato per accedere agli elementi di una lista.
-# 
-# Condizione Vettorizzata: result[[3]] >= 0.05 crea un vettore logico della stessa dimensione di result[[3]], dove ogni elemento è TRUE se il corrispondente valore di 
-# �
-# p è maggiore o uguale a 0.05, e FALSE altrimenti.
-# 
-# Indicizzazione Logica: Quando usi un vettore logico per indicizzare un dataframe o una matrice, selezioni solo gli elementi per i quali il vettore logico ha valore TRUE. Quindi, result[[1]][result[[3]] >= 0.05] seleziona tutti gli elementi in result[[1]] (i valori di 
-# �
-# r) che corrispondono ai valori di 
-# �
-# p in result[[3]] che sono 
-# ≥
-# 0.05
-# ≥0.05.
-# 
-# Assegnazione: Il <- NA assegna NA a tutti gli elementi selezionati nel passaggio precedente.
-# 
-
-corr_mat_adjusted <- as.matrix(corr_mat_adjusted[[1]])
-corr_mat_adjusted[(corr_mat_adjusted <= 0.6  & corr_mat_adjusted >= -0.6)] <- NA
-image(corr_mat_adjusted)
-
-# Further analyse highly correlated features
-corr_mat_adjusted[corr_mat_adjusted == 1] <- NA
-
-feature1_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,1])
-feature2_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,2])
-
-mIF <- make.unique(c(colnames(IF1_common), colnames(IF2_common), colnames(IF3_common)))
-valid_indices <- feature1_index < feature2_index  # Take only indices which are not symmetric 
-
-corr_values <- mapply(function(r, c) corr_mat_adjusted[r, c], feature1_index, feature2_index) # map a function to store each correlation value 
-
-high_corr_pairs <- data.frame("ID1" = ifelse(rownames(corr_mat_adjusted)[feature1_index] %in% mIF, "IF", "CellTFusion"), 
-                              "Feature1" = rownames(corr_mat_adjusted)[feature1_index], 
-                              "ID2" = ifelse(colnames(corr_mat_adjusted)[feature2_index] %in% mIF, "IF", "CellTFusion"), 
-                              "Feature2" = colnames(corr_mat_adjusted)[feature2_index],
-                              "Corr" = corr_values)
-
-high_corr_pairs_filtered <- high_corr_pairs[valid_indices, ]
-
-# Splitting correlation based on where they come from
-high_corr_pairs_IF <- filter(high_corr_pairs_filtered, ID1 == "IF", ID2 == "IF")
-high_corr_pairs_CellTFusion <- filter(high_corr_pairs_filtered, ID1 == "CellTFusion", ID2 == "CellTFusion")
-high_corr_pairs_Mixed <- filter(high_corr_pairs_filtered, (ID1 == "IF" & ID2 == "CellTFusion")|(ID1 == "CellTFusion" & ID2 == "IF")) %>%
-  arrange(Corr)
-
-ggplot(data = high_corr_pairs_Mixed, aes(Feature1, Feature2, fill=Corr, label=round(Corr,2))) +
-  geom_tile() +
-  labs(x = NULL, y = NULL, fill = paste0(cor_type, "'s\nCorrelation"), title="Correlations Deconvolution Features vs mIF",
-       subtitle=paste0("Only significant ", cor_type, "'s correlation coefficients shown")) +
-  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
-  geom_text() +
-  theme_classic() +
-  scale_x_discrete(expand=c(0,0)) +
-  scale_y_discrete(expand=c(0,0)) +
-  theme(text=element_text(family="Roboto"), axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
-  xlab("mIF") + 
-  ylab("CellTFusion Features") 
-
-ggsave(filename = paste0(output_folder_CellTFusion, files_names_CellTFusion, "CellTFusion_vs_IF_", cor_type,".png"), plot = last_plot(), width = 10, height = 10)
-message(paste("File saved in", paste0(output_folder_deconvolution, files_names_CellTFusion, "CellTFusion_vs_IF.png")))
-
-
-
-# ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
-#   geom_point() +
-#   geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
-
-
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
 ```
 
 # Benchmark of CellTFusion deconvolution results vs IMC data
 ```{r Correlation CellTFusion vs IMC}
-output_folder_CellTFusion <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/" 
-files_names_CellTFusion <- gsub(".csv$", "", basename("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv"))
+# Computing correlation between CellTFusion Deconvolution features and imaging
+corr_method <- "spearman"
+imaging = "IMC"
+Deconv = "CellTFusion"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
 
-# loading mIF files and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
-IMC <- import("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_celltype_densities.csv")
-rownames(IMC) <- IMC[,1]
-IMC <- IMC[,-1] 
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
 
-# Keeping only common patients and subsetting deconv and IF
-rownames(CellTFusion) <-  rownames(CellTFusion) %>%
-  str_remove_all("-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
-
-common_patients <- intersect(rownames(IMC), rownames(CellTFusion))
-IMC_common <- IMC[common_patients,]
-CellTFusion_common <- CellTFusion[common_patients,]
-
-# # Dividing all_markers from cell_types  
-# IF_cell_types <- IF_common[,1:9]
-# IF_markers <- IF_common[,10:15]
-
-# Merging all the IMC files and CellTFusion result
-merged_df <- cbind(IMC_common, CellTFusion_common)
-colnames(merged_df) <- make.unique(colnames(merged_df)) # ensure unique colnames to easily access to data
-
-
-# all vs all Correlation and image
-cor_type <- "spearman"
-correlation_matrix = cors(merged_df, cor_type)
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs", imaging, sep = "_"),
+                        output_folder = output_folder_CellTFusion,
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = Deconv,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
 
 
-corr_mat_adjusted <- correlation_matrix
-corr_mat_adjusted[[1]][corr_mat_adjusted[[3]] >= 0.05] <- NA
-# Nella sintassi result[[1]][result[[3]] >= 0.05] <- NA, stiamo applicando una logica vettorizzata. Ecco cosa succede passo per passo:
-# 
-# Accesso ai Dataframe: result[[1]] e result[[3]] accedono rispettivamente al primo e al terzo elemento della lista result. In R, le liste sono strutture dati che possono contenere oggetti di vario tipo, inclusi i dataframe. L'operatore [[ ]] viene usato per accedere agli elementi di una lista.
-# 
-# Condizione Vettorizzata: result[[3]] >= 0.05 crea un vettore logico della stessa dimensione di result[[3]], dove ogni elemento è TRUE se il corrispondente valore di 
-# �
-# p è maggiore o uguale a 0.05, e FALSE altrimenti.
-# 
-# Indicizzazione Logica: Quando usi un vettore logico per indicizzare un dataframe o una matrice, selezioni solo gli elementi per i quali il vettore logico ha valore TRUE. Quindi, result[[1]][result[[3]] >= 0.05] seleziona tutti gli elementi in result[[1]] (i valori di 
-# �
-# r) che corrispondono ai valori di 
-# �
-# p in result[[3]] che sono 
-# ≥
-# 0.05
-# ≥0.05.
-# 
-# Assegnazione: Il <- NA assegna NA a tutti gli elementi selezionati nel passaggio precedente.
-# 
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_CellTFusion, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
 
-corr_mat_adjusted <- as.matrix(corr_mat_adjusted[[1]])
-corr_mat_adjusted[(corr_mat_adjusted <= 0.5  & corr_mat_adjusted >= -0.5)] <- NA
-image(corr_mat_adjusted)
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
 
-# Further analyse highly correlated features
-corr_mat_adjusted[corr_mat_adjusted == 1] <- NA
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
 
-feature1_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,1])
-feature2_index <- as.integer(which(!is.na(corr_mat_adjusted), arr.ind = T)[,2])
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
 
-valid_indices <- feature1_index < feature2_index  # Take only indices which are not symmetric 
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
 
-corr_values <- mapply(function(r, c) corr_mat_adjusted[r, c], feature1_index, feature2_index) # map a function to store each correlation value 
+```
 
-high_corr_pairs <- data.frame("ID1" = ifelse(rownames(corr_mat_adjusted)[feature1_index] %in% colnames(IMC), "IMC", "CellTFusion"), 
-                              "Feature1" = rownames(corr_mat_adjusted)[feature1_index], 
-                              "ID2" = ifelse(colnames(corr_mat_adjusted)[feature2_index] %in% colnames(IMC), "IMC", "CellTFusion"), 
-                              "Feature2" = colnames(corr_mat_adjusted)[feature2_index],
-                              "Corr" = corr_values)
+# Benchmark of mIFs vs IMC data
+```{r Correlation mIFs vs IMC}
+# loading mIF DENSITIES files and using the same patient names convention.  
+IF1 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_densities.csv", header = 1, row.names = 1)
+rownames(IF1) <- rownames(IF1) %>% 
+  str_remove_all("-IF1-01")
 
-high_corr_pairs_filtered <- high_corr_pairs[valid_indices, ]
+IF2 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_densities.csv", header = 1, row.names = 1)
+rownames(IF2) <- rownames(IF2) %>% 
+  str_remove_all("-IF2-01")
 
-# Splitting correlation based on where they come from
-high_corr_pairs_IMC <- filter(high_corr_pairs_filtered, ID1 == "IMC", ID2 == "IMC")
-high_corr_pairs_CellTFusion <- filter(high_corr_pairs_filtered, ID1 == "CellTFusion", ID2 == "CellTFusion")
-high_corr_pairs_Mixed <- filter(high_corr_pairs_filtered, (ID1 == "IMC" & ID2 == "CellTFusion")|(ID1 == "CellTFusion" & ID2 == "IMC")) %>%
-  arrange(desc(Corr))
+IF3 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_densities.csv", header = 1, row.names = 1)
+rownames(IF3) <- rownames(IF3) %>% 
+  str_remove_all("-IF3-01")
 
-ggplot(data = high_corr_pairs_Mixed, aes(Feature1, Feature2, fill=Corr, label=round(Corr,2))) +
-  geom_tile() +
-  labs(x = NULL, y = NULL, fill = paste0(cor_type, "'s\nCorrelation"), title="Correlations Deconvolution Features vs mIF",
-       subtitle=paste0("Only significant ", cor_type, "'s correlation coefficients shown")) +
-  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
-  geom_text() +
-  theme_classic() +
-  scale_x_discrete(expand=c(0,0)) +
-  scale_y_discrete(expand=c(0,0)) +
-  theme(text=element_text(family="Roboto"), axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
-  xlab("IMC") + 
-  ylab("CellTFusion Features") 
+# Keeping only common patients and saving the file
+common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3))) # Redcue beacuse to apply intersect on more sets, you should reduce the common intersection progressively
+IFs <- cbind(IF1[common_patients,], IF2[common_patients,], IF3[common_patients,])
 
-ggsave(filename = paste0(output_folder_CellTFusion, files_names_CellTFusion, "_CellTFusion_vs_IMC_", cor_type,".png"), plot = last_plot(), width = 10, height = 10)
-message(paste("File saved in", paste0(output_folder_CellTFusion, files_names_CellTFusion, "CellTFusion_vs_IMC.png")))
+# write.csv(IFs, "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_densities.csv")
+
+# Computing correlation between mIFs densities vs IMC densities
+corr_method <- "spearman"
+imaging = "IMC"
+imaging2 = "mIFs"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_densities.csv",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-FIXT-01",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = imaging2)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(imaging2, "vs", imaging, sep = "_"),
+                        output_folder = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/",
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = imaging2,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
 
 
 # ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
 #   geom_point() +
 #   geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
 
-
 ```
-
 
 # TO DO
 ```{r}
