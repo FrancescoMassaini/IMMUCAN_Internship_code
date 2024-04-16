@@ -1,3 +1,4 @@
+
 ---
 title: "NSCLC2"
 author: "Francesco Massaini"
@@ -90,7 +91,7 @@ Compute_Samples_dendrogram <- function(df){
 
 # Correlation
 cors <- function(df, cor_type) {
-  M <- Hmisc::rcorr(as.matrix(na.omit(df)), type = cor_type)
+  M <- Hmisc::rcorr(as.matrix(df), type = cor_type)
   Mdf <- map(M, ~data.frame(.x))
   colnames(Mdf[[1]]) <- colnames(M[[1]])
   colnames(Mdf[[2]]) <- colnames(M[[1]])
@@ -532,8 +533,8 @@ rownames(deconv) <- rownames(deconv) %>%
 common_patients <- intersect(rownames(clinical), rownames(deconv))
 clinical_common <- clinical[common_patients,] %>%
   dplyr::select(death, gender, stage, side_localization, smoking_status, neo_adjuvant_treatment, adjuvant_treatment, type_of_adj_trt, metastatic_treatment, simple_histology, simple_stage, primary_localization, long_survivors, T_stage, M_stage, N_stage, primary_tumor_size, TIL_score)
-deconv_common <- deconv[common_patients, ] %>%
-  dplyr::select(grep("*._BPRNACan3DProMet_M2|CBSX_LM22_Macrophages_M2", colnames(deconv)))
+deconv_common <- deconv[common_patients, ] # %>%
+  # dplyr::select(grep("*._BPRNACan3DProMet_M2|CBSX_LM22_Macrophages_M2", colnames(deconv)))
 
 
 merged_df_clinical <- cbind(clinical_common, deconv_common)
@@ -661,11 +662,12 @@ Deconv = "CellTFusion"
 p_value_threshold <- 0.05 
 low_corr <- -0.5
 high_corr <- 0.5
+output_folder_CellTFusion = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/all_vs_all/"
 
-corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv",
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/Deconvolution_after_subgrouping.csv",
                          imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv",
-                         imaging_pattern_to_remove = "",
-                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04",
+                         imaging_pattern_to_remove = "-FIXT-01",
+                         deconv_pattern_to_remove = "",
                          significance_level = p_value_threshold,
                          low_corr_threshold = low_corr,
                          high_corr_threshold = high_corr,
@@ -682,7 +684,10 @@ plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
                         y_label = Deconv,
                         significance_level = p_value_threshold,
                         high_corr_threshold = high_corr,
-                        low_corr_threshold = low_corr)
+                        low_corr_threshold = low_corr,
+                        png_width = 20,
+                        png_height = 20
+                        )
 
 
 # Apri il dispositivo PDF
@@ -728,10 +733,10 @@ p_value_threshold <- 0.05
 low_corr <- -0.5
 high_corr <- 0.5
 
-corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv",
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IMC_CellTFusion_result/Deconvolution_after_subgrouping.csv",
                          imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
                          imaging_pattern_to_remove = "",
-                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01",
+                         deconv_pattern_to_remove = "",
                          significance_level = p_value_threshold,
                          low_corr_threshold = low_corr,
                          high_corr_threshold = high_corr,
@@ -801,7 +806,7 @@ rownames(IF3) <- rownames(IF3) %>%
   str_remove_all("-IF3-01")
 
 # Keeping only common patients and saving the file
-common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3))) # Redcue beacuse to apply intersect on more sets, you should reduce the common intersection progressively
+common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3))) # Reduce because to apply intersect on more sets, you should reduce the common intersection progressively
 IFs <- cbind(IF1[common_patients,], IF2[common_patients,], IF3[common_patients,])
 
 # write.csv(IFs, "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_densities.csv")
@@ -896,67 +901,20 @@ imaging_common <- imaging[common_patients,]
 deconv_common <- deconv[common_patients, ]
 
 deconv_common.fixed = fix.names.GEMDeCan(deconv_common)
-source('~/Downloads/pseudobulk_function.R')
+source('/home/francesco.massaini/Desktop/IMMUCAN_Internship_code/pseudobulk_function.R')
 
-benchmarking_deconvolution(deconvolution = deconv_common.fixed, groundtruth = imaging_common, corr_type = corr_method, file_name = paste0("correlation_", Deconv_method, "_vs_", imaging_method, "_", corr_method), scatter = TRUE, imaging_type = imaging_method)
+benchmarking_deconvolution(deconvolution = deconv_common.fixed, groundtruth = imaging_common, corr_type = corr_method, file_name = paste0("correlation_", Deconv_method, "_vs_", imaging_method, "_", corr_method), scatter = TRUE, imaging_type = imaging_method, coord_x = 1, coord_y = 1000)
+
 ```
-# Correlation splitting by cell types CellTFusion IMC
+
+# Correlation splitting by cell types Deconvolution IMC specific for Mural # TO DO
 ```{r Correlation splitting by cell types IMC}
 imaging_method = "IMC"
-Deconv_method = "CellTFusion"
-corr_method <- "spearman"
-
-imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
-imaging = imaging[,-1]
-
-imaging = imaging %>%
-  rename("B" = "B.cells",
-         "CD4" = "CD4.cells",
-          "CD8" = "CD8.cells",
-          "DC" = "Dendritic.cells",
-          "MacCD163" = "Macrophages.M2",
-          "NK" = "NK.cells",
-          "Treg" = "T.cells.regulatory",
-          "Tumor" = "Cancer",
-          "plasma" = "Plasma")
-
-source('~/CellTFusion/src/cell_deconvolution.R')
-
-deconv = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv", header = 1, row.names = 1)
-
-rownames(deconv) <- str_remove_all(string = rownames(deconv), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
-
-common_patients <- intersect(rownames(deconv), rownames(imaging))
-
-# Subset the data for common patients
-imaging_common <- imaging[common_patients,]
-deconv_common <- deconv[common_patients, ]
-
-deconv_common.fixed = fix.names.GEMDeCan(deconv_common)
-source('~/Downloads/pseudobulk_function.R')
-
-benchmarking_deconvolution(deconvolution = deconv_common.fixed, groundtruth = imaging_common, corr_type = corr_method, file_name = paste0("correlation_", Deconv_method, "_vs_", imaging_method, "_", corr_method), scatter = TRUE, imaging_type = imaging_method)
-```
-
-# Correlation splitting by cell types IF
-```{r Correlation splitting by cell types IF}
-imaging_method = "IF1"
 Deconv_method = "Deconv"
 corr_method <- "spearman"
 
-imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", row.names = 1)
-imaging = imaging[,-1]
-colnames(imaging) = str_remove_all(colnames(imaging), "_fraction")
-rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-IF1-01|-FIXT-01")
-
-
-imaging = imaging %>%
-  rename("B" = "B.cells",
-          "DC" = "Dendritic.cells",
-          "MacCD163" = "Macrophages.M1",
-          "Neutrophil" = "Neutrophils",
-          "Tumor" = "Cancer",
-         "T" = "T.cells")
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
+imaging = select(imaging, Mural)
 
 source('~/CellTFusion/src/cell_deconvolution.R')
 
@@ -971,7 +929,260 @@ imaging_common <- imaging[common_patients,]
 deconv_common <- deconv[common_patients, ]
 
 deconv_common.fixed = fix.names.GEMDeCan(deconv_common)
-source('~/Downloads/pseudobulk_function.R')
 
-benchmarking_deconvolution(deconvolution = deconv_common.fixed, groundtruth = imaging_common, corr_type = corr_method, file_name = paste0("correlation_", Deconv_method, "_vs_", imaging_method, "_", corr_method), scatter = TRUE, imaging_type = imaging_method, coord_x = 0.01, coord_y = 0.5)
+IMC_Deconv <- cbind(deconv_common.fixed, imaging_common)
+
+Mural_corr <- rcorr(y =deconv_common.fixed,x =imaging_common, type = "spearman")
+View(Mural_corr$r)
+# my_cor<-cor$r[c("hp","wt"),c("mpg","disp")]
+
+```
+
+
+# Correlation splitting by cell types CellTFusion IMC
+```{r Correlation splitting by cell types IMC}
+imaging_method = "IMC"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
+imaging = imaging[,-1]
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IMC_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IMC/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+```
+
+# Correlation splitting by cell types CellTFusion mIFs
+```{r Correlation splitting by cell types mIFs}
+# IF1
+
+imaging_method = "IF1"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", row.names = 1)
+imaging = imaging[,-1]
+rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01|-IF1-01")
+
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IF1/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+
+# IF2
+imaging_method = "IF2"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_fraction.csv", row.names = 1)
+imaging = imaging[,-1]
+rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01|-IF2-01")
+
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IF2/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+
+# IF3
+imaging_method = "IF3"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_fraction.csv", row.names = 1)
+imaging = imaging[,-1]
+rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01|-IF3-01")
+
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IF3/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
 ```
