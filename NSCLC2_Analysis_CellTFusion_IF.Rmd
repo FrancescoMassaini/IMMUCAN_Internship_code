@@ -93,7 +93,7 @@ is 0.8. Simile a quello che si fa con le features alla fine
 network = compute.WTCNA(tfs, corr_mod = 0.8, clustering.method = "ward.D2") # Soft_Threshold file is in usr_projects/Results
 
 # Association of TFs modules with clinical data
-compute.metada.association(network[[1]], traitData, pval = 0.05, width = 10) 
+# compute.metada.association(network[[1]], traitData, pval = 0.05, width = 10) 
 ```
 
 3. Modules characterization

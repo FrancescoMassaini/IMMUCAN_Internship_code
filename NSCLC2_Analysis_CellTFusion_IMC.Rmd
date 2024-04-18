@@ -125,7 +125,7 @@ The function computes linear and proportional correlations to produce cell subgr
 signatures correlated for above a specific threshold within each cell type.
 ```{r}
 deconvolution = fix.names.GEMDeCan(deconv)
-dt = compute.deconvolution.analysis(deconvolution, corr = 0.7, high_corr = 0.99)
+dt = compute.deconvolution.analysis(deconvolution, corr = 0.7)
 save(dt, file = "CellTFusion_Subgroups.RData")
 #Association of TFs modules with deconvolution 
 compute.modules.relationship(network[[1]], dt[[1]], "Deconvolution-TFs_Modules", vertical = T, height = 30, width = 10, pval = 0.1)

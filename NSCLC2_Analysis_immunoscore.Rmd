@@ -1,0 +1,113 @@
+
+---
+title: "NSCLC2"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+---
+
+# Imports
+```{r Imports}
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(org.Hs.eg.db) # Homo sapiens db
+library(stringr)
+library(RColorBrewer) # for plot
+library(pheatmap) # for heatmaps
+library(ADImpute) # This package provides functions to compute TPM
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+library(survival)
+library(ranger)
+library(ggfortify)
+library(rlang)
+library(purrr)
+library(rio)
+library(tidycmprsk)
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=10, fig.height=10)
+
+```
+
+# Functions
+```{r Functions}
+source("/home/francesco.massaini/Desktop/IMMUCAN_Internship_code/Functions.R")
+```
+
+# Import files and find common patients
+```{r Files}
+clinical = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
+ column_to_rownames(var = "immucan_id") 
+immunoscore = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/ImmuneScores_NSCLC2_groups.csv", row.names = 1) %>%
+  filter(ImmuneScores_Classification %in% c("Hot", "Cold")) 
+
+rownames(immunoscore) <- rownames(immunoscore) %>%
+  str_replace_all(pattern = "\\.", replacement = "-") %>%
+  str_remove_all(pattern = "-FIXT-01|-RNA-01|-RNA-02")
+
+immunoscore_common = filter_common_patients(immunoscore, clinical)[[1]]
+clinical_common = filter_common_patients(immunoscore, clinical)[[2]]
+common_patients = filter_common_patients(immunoscore, clinical)[[3]]
+
+print(paste("Number of immunoscore patients (only High or Cold)", length(common_patients)))
+print(paste("Number of common patients", length(common_patients)))
+```
+# Clean clinical columns
+```{r Clean clinical columns}
+clinical_common = mutate(clinical_common, across(c("average_number_of_cigarettes", "number_of_years"), ~ ifelse(. == "U", NA, .)))
+
+clinical_categorical_columns = which(sapply(clinical_common, is.character) | sapply(clinical_common, is.factor)) 
+not_useful_categorical_columns = which(colnames(clinical_common) %in% c("disease", "date_of_diagnosis", "second_line", "driver_mutation", "type_of_neo_adj_trt", "curative_surgery")) 
+clinical_categorical_columns = setdiff(clinical_categorical_columns, not_useful_categorical_columns)
+
+head(clinical_common[,clinical_categorical_columns])
+
+
+clinical_numeric_columns = which(sapply(clinical_common, is.numeric))
+not_useful_numeric_columns = which(colnames(clinical_common) %in% c("patient_id", "ibbl_kit_ids")) 
+clinical_numeric_columns = setdiff(clinical_numeric_columns, not_useful_numeric_columns)
+
+head(clinical_common[,clinical_numeric_columns])
+```
+
+# Plots and Tests
+```{r Fisher's test}
+
+for (i in 1:length(clinical_categorical_columns)){
+  column = clinical_common[,clinical_categorical_columns[i], drop = FALSE]
+  if (length(unique(na.omit(column[,1]))) >= 2) {
+    merged_df = cbind(column, "ImmuneScores_Classification" = immunoscore_common[,"ImmuneScores_Classification"])
+    contingency_table = table(merged_df)
+    fisher_result <- fisher.test(as.matrix(contingency_table))
+    if (fisher_result$p.value < 0.05) {
+      print(paste(colnames(column), fisher_result$p.value))
+      print(contingency_table)
+      mosaicplot(contingency_table + 0.1,
+      main = "Mosaic plot",
+      sub = paste("P-value:", format(fisher_result$p.value, digits = 2)),
+      color = TRUE
+      )
+    }
+    else {
+    print(paste(colnames(column), "No Significance"))
+    }
+  }
+}
+```
+
+```{r Survival analysis}
+merged_df = cbind(clinical_common, "ImmuneScores_Classification" = immunoscore_common[,"ImmuneScores_Classification"])
+merged_df[,"death"] = as.logical(merged_df[,"death"] == "Yes")
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ ImmuneScores_Classification, data=merged_df)
+autoplot(km_trt_fit)
+
+merged_df[,"death"] = as.factor(merged_df[,"death"])
+crr(Surv(time_to_event, death) ~ ImmuneScores_Classification + age_at_registration, data = merged_df)
+
+```

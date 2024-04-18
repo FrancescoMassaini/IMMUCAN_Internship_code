@@ -1,16 +1,3 @@
----
-title: "Functions"
-author: "Francesco Massaini"
-date: "2024-04-16"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-# Functions
-```{r Functions}
 filter_common_patients <- function(df1, df2) {
   # Find the common row names (patients) between the two data frames
   common_patients <- intersect(rownames(df1), rownames(df2))
@@ -22,6 +9,3 @@ filter_common_patients <- function(df1, df2) {
   # Return a list containing the filtered data frames
   return(list(df1 = df1_filtered, df2 = df2_filtered, common_patients = common_patients))
 }
-```
-
-
