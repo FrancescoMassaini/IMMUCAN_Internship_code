@@ -230,11 +230,9 @@ merged_counts <- read.delim(txt_input_files[1], header = 0, row.names = 1)
 colnames(merged_counts) <- samples_names[1]
 
 for (i in 2:length(txt_input_files)) {
-  # print(i)
     # Leggi il data frame successivo
   counts <- read.delim(txt_input_files[i], header = 0, row.names = 1)
   colnames(counts) <- samples_names[i]
-  # print(samples_names[i])
   # Unisci le colonne del nuovo data frame a merged_counts
   merged_counts <- cbind(merged_counts, counts)
 }
