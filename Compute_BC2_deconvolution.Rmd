@@ -1,0 +1,18 @@
+---
+title: "Analysis"
+author: "Francesco Massaini"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r}
+source("src/environment_set.R")
+```
+
+BC2 Deconvolution
+```{r}
+# Load data
+TPM = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/BC2_filtered_samples_fromRdata.txt", sep = "\t")
+
+deconv = compute.deconvolution(TPM_matrix = as.matrix(TPM), signatures_exclude = "CD226")
+```

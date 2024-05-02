@@ -171,7 +171,7 @@ factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5
 BC2 <- rownames_to_column(BC2, "Genes") 
 # Write file in the correct format for deconvolution
 
-write.table(BC2, file = paste0("../IMMUCAN_data", folders_names[[1]][1], files_names[1],"_fromRdata.txt"), quote = F, sep = "\t", row.names = F)
+write.table(BC2, file = paste0("../IMMUCAN_data/BC2/02_TPM/BC2_","filtered_samples_fromRdata.txt"), quote = F, sep = "\t", row.names = F)
 message(paste("File saved in", paste0("../IMMUCAN_data", folders_names[[1]][1], files_names[1],"_fromRdata.txt")) )
 ```
 
