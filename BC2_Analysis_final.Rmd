@@ -25,7 +25,6 @@ library(ggfortify)
 library(rlang)
 library(purrr)
 library(rio)
-library(biomaRt)
 
 ```
 
@@ -38,7 +37,7 @@ knitr::opts_chunk$set(fig.width=10, fig.height=10)
 
 # Functions
 ```{r Functions}
-source("/home/francesco.massaini/Desktop/IMMUCAN_Internship_code/Functions.R")
+source("./Functions.R")
 ```
 
 # Path and folders
@@ -55,7 +54,7 @@ output_folder_CellTFusion <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCL
 
 # 02 Analizing TPM
 ```{r Distribution}
-TPM = load("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/BC2_estimated_TPM.RData")
+TPM = load("../IMMUCAN_data/BC2/02_TPM/BC2_estimated_TPM.RData")
 colSums(gexp_tpm) 
 
 TPM = remove_gene_version(gexp_tpm)
@@ -79,76 +78,66 @@ ggplot2::ggplot(TPM_long, aes(x = log1p(TPM)))+
        x = "log(TPM + 1)", 
        y = "Density")
 ```
+# 03 BC2 Filtering Samples and saving file
+```{r Filtering samples}
+# Filtering samples with the list samples_list
+samples_list = read.delim("../IMMUCAN_data/BC2/Patient_to_include_from_rna_samples_bc2_to_create_custom_cohort.tsv")
 
-# 03 TPM Analysis
+BC2_samples <- intersect(colnames(TPM), samples_list$sample)
+BC2 <- TPM[,BC2_samples] 
+
+write.csv(BC2, file = "../IMMUCAN_data/BC2/02_TPM/BC2_fromAndreaRdata_filtered_Samples.csv")
+```
+
+# 04 TPM Analysis
 ```{r Heatmap and dendrogram}
 # Heatmap and dendrogram to see patient outliers on TPM
 
-output_folder_TPM_outlier <- paste0(str_split_i(output_folder, "02_TPM/", 1), "02_Plot_Outliers/")
-
-# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.pdf"), width = 16, height = 16)
-png(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.png"), width = 2000, height = 2000)
-Compute_Samples_Heatmap(TPM)
-dev.off()
-# dev.off()
-
-# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"))
-png(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.png"), width = 2000, height = 1000)
-Compute_Samples_dendrogram(TPM)
-dev.off()
-# dev.off()
-
+Compute_Samples_dendrogram(BC2)
+Compute_Samples_Heatmap(BC2)
 
 # PCA biplot on TPM
-
-pca_result <- PCA(t(TPM), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
+pca_result <- PCA(t(BC2), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
 fviz_eig(pca_result)
 
-# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
-png(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.png"))
 factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
-dev.off()
-# dev.off()
+
 ```
 
-# Loading Deconvolution Data
+# 05 Loading Deconvolution Data
 ```{r Loading Deconvolution}
-# Deconvoltion Data Loading
-input_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
-output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
-txt_input_files_deconvolution <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt")
-files_names_deconvolution <- gsub(".txt$", "", basename(txt_input_files_deconvolution))
-
-deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
-
+deconv <- read.table("../IMMUCAN_data/BC2/03_Deconvolution/all_deconvolutions_BC2_filtered_samples.txt", header = TRUE,  sep = '	', row.names = 1)
+rownames(deconv) = str_replace_all(string = rownames(deconv), pattern = "\\.", replacement = "-")
 ```
 
-# Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
+# 06 Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
 ```{r Deconvolution}
 # Sample clustering
-# pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.pdf"), width = 2000, height = 2000)
-png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.png"), width = 2000, height = 2000)
-Compute_Samples_Heatmap(t(deconv)) # double t() (here and in the function) to take into account rows
-dev.off()
-# dev.off()
 
-# pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.pdf"), width = 2000, height = 2000)
-png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.png"), width = 2000, height = 1000)
 Compute_Samples_dendrogram(t(deconv))
-dev.off()
-# dev.off()
+Compute_Samples_Heatmap(t(deconv)) # double t() (here and in the function) to take into account rows
 
 # PCA
 pca_result <- PCA(deconv, scale.unit = TRUE, graph = FALSE) # t(deconv) because PCA takes rows 
 fviz_eig(pca_result)
 
-# pdf(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.pdf"))
-png(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.png"))
 factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
-dev.off()
-# dev.off()
 
 ```
+# 07 Clinical Data
+```{r}
+clinical = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240403.tsv", sep = "\t")
+relevant_clinical_feature = c("sex", "PCR", "stage", "M_stage", "N_stage", "T_stage")
+```
+
+# 08 mIF data loading and sample filtering
+```{r}
+# Load data
+IF1 = read.delim("C:/Users/Francesco/Desktop/IMMUCAN_data/BC2/IF1/IMMU-BC2-0118-FIXT-01-IF1-01_#_cells_properties_#_ca1f580385e6326c85cc2a31447cc380.tsv", sep = "\t") 
+IF2 = read.delim("C:/Users/Francesco/Desktop/IMMUCAN_data/BC2/IF1/IMMU-BC2-0118-FIXT-01-IF1-01_#_cells_properties2_#_17ba248fc294d4f08c29e9ec43370c96.tsv", sep = "\t")  
+
+```
+
 
 # Benchmark of deconvolution results vs mIF data
 ```{r Correlation Deconv vs mIF}

@@ -1,0 +1,60 @@
+---
+title: "Filtering_samples"
+author: "Francesco Massaini"
+date: "2024-03-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Inputs
+```{r Inputs}
+library(dplyr)
+library(tibble)
+library(org.Hs.eg.db) # Homo sapiens db
+library(stringr)
+```
+# Functions
+```{r Functions}
+# Remove version number from ENSEMBL ID
+remove_gene_version <- function(TPM) {
+  rownames(TPM) <- rownames(TPM) %>% 
+    str_remove("\\..*$") 
+  return(as.data.frame(TPM))
+}
+
+
+# Replace ENSEMBL ID with GENE SYMBOL
+EnsemblID_to_GeneSymbol <- function(TPM){
+  entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(TPM), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your TPM 
+  TPM <- TPM %>%
+    mutate(ENSEMBL = rownames(TPM)) %>% # add a column
+    inner_join(., entrz, by="ENSEMBL") %>% # join, merge df with a common column (ENSEMBL)
+    dplyr::filter(!is.na(SYMBOL)) %>%
+    distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
+    column_to_rownames("SYMBOL") %>% 
+    dplyr::select(., -c("ENSEMBL")) 
+}
+```
+
+# load data from RData
+```{r Loading data}
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/BC2_estimated_TPM.RData")
+samples_list <- read.table("/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/Patient_to_include_from_rna_samples_bc2_to_create_custom_cohort.tsv", header = TRUE, sep = "\t")
+```
+
+# Convert ENSEMBL ID with GENE SYMBOL
+```{r ENSEMBL ID to Gene Symbols}
+BC2_TPM <- remove_gene_version(gexp_tpm)
+BC2_gene_symbols <- EnsemblID_to_GeneSymbol(BC2_TPM)
+```
+
+# Filtering Samples and saving file
+```{r Loading data}
+BC2_samples <- intersect(colnames(BC2_gene_symbols), samples_list$sample)
+BC2 <- BC2_gene_symbols[BC2_samples] %>%
+  rownames_to_column("Genes") 
+write.table(BC2, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/BC2_TPM_fromRdata.txt", quote = F, sep = "\t", row.names = F)
+```
