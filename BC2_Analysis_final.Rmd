@@ -78,6 +78,7 @@ ggplot2::ggplot(TPM_long, aes(x = log1p(TPM)))+
        x = "log(TPM + 1)", 
        y = "Density")
 ```
+
 # 03 BC2 Filtering Samples and saving file
 ```{r Filtering samples}
 # Filtering samples with the list samples_list

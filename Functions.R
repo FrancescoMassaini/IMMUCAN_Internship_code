@@ -39,7 +39,7 @@ counts_to_TPM <- function(raw_counts_file){
 
 
 # Plots - Heatmap
-Compute_Samples_Heatmap <- function(df){
+Compute_Samples_Heatmap <- function(df, main_title = "", sub_title=""){
   df <- as.matrix(df)
   
   # Utilizes the NormalizeTPM function from the ADImpute package.
@@ -50,8 +50,7 @@ Compute_Samples_Heatmap <- function(df){
   
   sampleDists <- dist(t(df), method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
   sampleDistMatrix <- as.matrix(sampleDists)
-  colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-  pheatmap(sampleDistMatrix,    main = "Samples heatmap", sub="", xlab="",
+  pheatmap(sampleDistMatrix, main = main_title, sub=sub_title, xlab="",
            cex.lab = 1, cex.axis = 1, cex.main = 2, clustering_method = 'complete')
 }
 
@@ -59,7 +58,7 @@ Compute_Samples_Heatmap <- function(df){
 Compute_Samples_dendrogram <- function(df){
   sampleTree = hclust(dist(t(df), method = 'euclidean'), method = "complete");
   plot(sampleTree, main = "Samples dendrogram", sub="", xlab="", 
-       cex.lab = 1, cex.axis = 1, cex.main = 2)
+       cex = 0.5, cex.main = 1)
 }
 
 

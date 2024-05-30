@@ -11,14 +11,14 @@ load_phenotype_keys <- function(phenotype_keys_path, current_IF) {
 }
 
 # Function to process tissue type (create cell types frequency df)
-process_tissue_type <- function(df, tissue_type, IF_dir, current_IF, save_files) {
+process_tissue_type <- function(df, tissue_type, IF_dir, current_IF, save_files, file_name) {
   tissue_df <- df %>% filter(tissue_type == tissue_type)
-  celltype_freq <- as.data.frame(table(tissue_df$sample_panel_ID, tissue_df$celltype))
-  colnames(celltype_freq) <- c("sample_panel_ID", "celltypes", "Freq")
+  celltype_freq <- as.data.frame(table(tissue_df$sample_ID, tissue_df$celltype))
+  colnames(celltype_freq) <- c("sample_ID", "celltypes", "Freq")
   celltype_freq <- celltype_freq %>% mutate(tissue_type = tissue_type)
   
   if (save_files) {
-    write.csv(celltype_freq, paste0(IF_dir, current_IF, "_all_patients_", tissue_type, "_cell_freq.csv"))
+    write.csv(celltype_freq, paste0(IF_dir, current_IF, file_name, tissue_type, "_cell_freq.csv"), row.names = FALSE)
   }
 }
 
@@ -102,18 +102,18 @@ phenotype_keys_path <- "../IMMUCAN_data/Phenotype_keys_from_GitHub/"
 
 # Process IF1
 IF1_data <- process_individual_IF_files(IF_path, phenotype_keys_path, "IF1", save_files = TRUE)
-process_tissue_type(IF1_data, "tumor", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE)
-process_tissue_type(IF1_data, "stroma", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE)
+process_tissue_type(IF1_data, "tumor", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE, file_name = "_all_patients_")
+process_tissue_type(IF1_data, "stroma", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE, file_name = "_all_patients_")
 
 # Process IF2
 IF2_data <- process_individual_IF_files(IF_path, phenotype_keys_path, "IF2", save_files = TRUE)
-process_tissue_type(IF2_data, "tumor", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE)
-process_tissue_type(IF2_data, "stroma", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE)
+process_tissue_type(IF2_data, "tumor", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE, file_name = "_all_patients_")
+process_tissue_type(IF2_data, "stroma", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE, file_name = "_all_patients_")
 
 # Process IF3
 IF3_data <- process_individual_IF_files(IF_path, phenotype_keys_path, "IF3", save_files = TRUE)
-process_tissue_type(IF3_data, "tumor", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE)
-process_tissue_type(IF3_data, "stroma", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE)
+process_tissue_type(IF3_data, "tumor", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE, file_name = "_all_patients_")
+process_tissue_type(IF3_data, "stroma", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE, file_name = "_all_patients_")
 
 # Load patient lists for each panel
 IF1_patients_list <- load_patients_list("../IMMUCAN_data/BC2/01_Reference_files_from_Andrea_BC2_TNBC/List_samples_data_type/mif1_samples_bc2_custom_cohort.xlsx", "IF1")
@@ -129,18 +129,18 @@ write.csv(IFs, "../IMMUCAN_data/BC2/01_Reference_files_from_Andrea_BC2_TNBC/List
 
 # Filter and process patients for IF1
 IF1_patients_filtered <- filter_patients(IF1_data, IFs, paste0(IF_path, "IF1/"), "IF1", save_files = TRUE)
-process_tissue_type(IF1_patients_filtered, "tumor", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE)
-process_tissue_type(IF1_patients_filtered, "stroma", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE)
+process_tissue_type(IF1_patients_filtered, "tumor", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE, file_name = "_filtered_patients_")
+process_tissue_type(IF1_patients_filtered, "stroma", paste0(IF_path, "IF1/"), "IF1", save_files = TRUE, file_name = "_filtered_patients_")
 
 # Filter and process patients for IF2
 IF2_patients_filtered <- filter_patients(IF2_data, IFs, paste0(IF_path, "IF2/"), "IF2", save_files = TRUE)
-process_tissue_type(IF2_patients_filtered, "tumor", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE)
-process_tissue_type(IF2_patients_filtered, "stroma", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE)
+process_tissue_type(IF2_patients_filtered, "tumor", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE, file_name = "_filtered_patients_")
+process_tissue_type(IF2_patients_filtered, "stroma", paste0(IF_path, "IF2/"), "IF2", save_files = TRUE, file_name = "_filtered_patients_")
 
 # Filter and process patients for IF3
 IF3_patients_filtered <- filter_patients(IF3_data, IFs, paste0(IF_path, "IF3/"), "IF3", save_files = TRUE)
-process_tissue_type(IF3_patients_filtered, "tumor", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE)
-process_tissue_type(IF3_patients_filtered, "stroma", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE)
+process_tissue_type(IF3_patients_filtered, "tumor", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE, file_name = "_filtered_patients_")
+process_tissue_type(IF3_patients_filtered, "stroma", paste0(IF_path, "IF3/"), "IF3", save_files = TRUE, file_name = "_filtered_patients_")
 
 # Directory structure
 # ../IMMUCAN_data/

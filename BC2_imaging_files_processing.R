@@ -11,14 +11,14 @@ load_phenotype_keys <- function(phenotype_keys_path, current_IF) {
 }
 
 # Function to process tissue type
-process_tissue_type <- function(df, tissue_type, IF_dir, current_IF, save_files) {
+process_tissue_type <- function(df, tissue_type, IF_dir, current_IF, save_files, file_name) {
   tissue_df <- df %>% filter(tissue_type == tissue_type)
   celltype_freq <- as.data.frame(table(tissue_df$sample_panel_ID, tissue_df$celltype))
-  colnames(celltype_freq) <- c("sample_panel_ID", "celltypes", "Freq")
+  colnames(celltype_freq) <- c("sample_ID", "celltypes", "Freq")
   celltype_freq <- celltype_freq %>% mutate(tissue_type = tissue_type)
   
   if (save_files) {
-    write.csv(celltype_freq, paste0(IF_dir, current_IF, "_all_patients_", tissue_type, "_cell_freq.csv"))
+    write.csv(celltype_freq, paste0(IF_dir, current_IF, file_name, tissue_type, "_cell_freq.csv"), row.names = FALSE)
   }
 }
 
@@ -80,8 +80,8 @@ process_individual_IF_files <- function(IF_path, phenotype_keys_path, current_IF
   }
   
   # Process tumor and stroma tissue types
-  process_tissue_type(all, "tumor", IF_dir, current_IF, save_files)
-  process_tissue_type(all, "stroma", IF_dir, current_IF, save_files)
+  process_tissue_type(all, "tumor", IF_dir, current_IF, save_files, file_name = "_all_patients_")
+  process_tissue_type(all, "stroma", IF_dir, current_IF, save_files, file_name = "_all_patients_")
   
   cat("Total rows before filtering:", nrow(all), "\nTotal samples:", length(unique(all$sample_ID)), "\n")
   
@@ -106,8 +106,8 @@ process_individual_IF_files <- function(IF_path, phenotype_keys_path, current_IF
   }
   
   # Process filtered tumor and stroma tissue types
-  process_tissue_type(IF_patients_filtered, "tumor", IF_dir, current_IF, save_files)
-  process_tissue_type(IF_patients_filtered, "stroma", IF_dir, current_IF, save_files)
+  process_tissue_type(IF_patients_filtered, "tumor", IF_dir, current_IF, save_files, file_name = "_filtered_patients_")
+  process_tissue_type(IF_patients_filtered, "stroma", IF_dir, current_IF, save_files, file_name = "_filtered_patients_")
 }
 
 # Main paths

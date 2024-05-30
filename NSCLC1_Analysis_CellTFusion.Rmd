@@ -1,0 +1,151 @@
+---
+title: "Analysis"
+author: "Francesco Massaini"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r}
+source("../src/environment_set.R")
+```
+
+Input files
+```{r}
+# read_csv() and read_tsv() are special cases of the more general read_delim()
+# read.table() Reads a file in table format and creates a data frame from it, with cases corresponding to lines and variables to fields in the file.
+
+# Il risultato di questo processo è un dataframe dove la prima riga del file originale diventa l'insieme dei nomi delle colonne, e i valori nella prima colonna del file diventano i nomi delle righe del dataframe, facilitando l'accesso e la manipolazione dei dati in analisi successive.
+
+traitData = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
+  column_to_rownames(var = "immucan_id") # %>%
+  # mutate(across(c(average_number_of_cigarettes, number_of_years),
+  #               ~ na_if(.x, "U")))
+
+deconv = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt", row.names = 1)
+rownames(deconv) <- str_remove_all(string = rownames(deconv), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
+
+common_patients <- intersect(rownames(traitData), rownames(deconv))
+deconv = deconv[common_patients,]
+traitData = traitData[common_patients,]
+
+counts.norm = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM.txt", row.names = 1) 
+colnames(counts.norm) = str_replace_all(colnames(counts.norm), "\\.", "-")
+colnames(counts.norm) <- str_remove_all(string = colnames(counts.norm), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
+counts.norm = counts.norm[,common_patients]
+
+imagingIMC = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
+common_patients = intersect(rownames(imagingIMC), rownames(deconv))
+
+deconv = deconv[common_patients,]
+traitData = traitData[common_patients,]
+counts.norm = counts.norm[,common_patients]
+
+#####
+coldata_categorical = traitData %>%
+  dplyr::select(where(is.character) | where(is.factor))
+
+# Inizializza una lista per mantenere i nomi delle colonne problematiche
+problematic_columns = list()
+
+# Cicla attraverso le colonne e verifica il numero di livelli unici
+for (col in names(coldata_categorical)) {
+  if (is.factor(coldata_categorical[[col]])) {
+    # Controlla i fattori direttamente
+    num_levels = nlevels(coldata_categorical[[col]])
+  } else {
+    # Per i caratteri, conta i livelli unici
+    num_levels = length(unique(coldata_categorical[[col]]))
+  }
+  
+  # Stampa il nome della colonna se ha meno di 2 livelli unici
+  if (num_levels < 2) {
+    cat("La colonna", col, "ha solo", num_levels, "livello/i unico/i.\n")
+    problematic_columns[[col]] = num_levels
+  }
+}
+
+# Se la lista è vuota, nessun problema trovato
+if (length(problematic_columns) == 0) {
+  cat("Nessuna colonna problematica trovata.\n")
+} else {
+  print(problematic_columns)
+}
+
+traitData = select(traitData, -names(problematic_columns))
+```
+
+CellTFusion
+
+1. TFs inference
+```{r}
+tfs = compute.TFs.activity(counts.norm)
+```
+
+2. TFs network construction
+Group meeting 31/10/2023 slide 27. All the pass
+corr_mod value from 0 to 1 used for merge modules in a second
+iteration. After the first TF-module construction, a correlation
+will take place between modules and modules correlated by a
+threshold higher than this value will be merged. Default value
+is 0.8. Simile a quello che si fa con le features alla fine 
+```{r}
+network = compute.WTCNA(tfs, corr_mod = 0.8, clustering.method = "ward.D2") # Soft_Threshold file is in usr_projects/Results
+
+# Association of TFs modules with clinical data
+compute.metada.association(network[[1]], traitData, pval = 0.05, width = 10) 
+```
+
+3. Modules characterization
+Questioni relative all'enrichment. I moduli sono costituiti da TFs ma se fai l'arricchimento di questi geni rispetto ad un universo che e' tutti i geni, ottieni come risultato l-arricchimento in "Regolazione genica". 
+Per evitare cio' e ottenere l'arricchimento in cosa fanno effettivamente i moduli, quello che fai e' prendere i geni regolati da questi TF (e la funzione compute.modules.enrichment prima estrae questi geni dal totale dei dati) e fare l-arricchimento di questi target genes contro l'universo di tutti i geni. 
+In alternativa potresti ridurre l'universo a tutti i TF possibili e vedere se questi sono arricchiti. Se pero' riduci l'universo ci sono dei problemi statistici.
+
+To avoid common enrichment results
+because of the overlapping of several target genes, a step to filter and only keep unique pathways by
+module is done.
+
+```{r}
+# Probably tfs used to extract tf and found all the genes. network[[1]] e' la matrice con tutti i moduli per i vari samples e network[[2]] e' una lista di caratteri che corrispondono a quale TF corrisponde a quele modulo
+compute.modules.enrichment(counts.norm, tfs, network[[1]], network[[2]])
+```
+
+4. Pathways activity inference
+```{r}
+
+
+# Additional characterization of TFs modules is done by performing a Gene Set Variation Analysis (GSVA) using Progeny and Hallmarks signatures from MsigDB.
+
+pathways = compute.pathway.activity(counts.norm)
+#Association of TFs modules with pathways
+compute.modules.relationship(network[[1]], pathways, "Pathways_Progeny-TFs_Modules", width = 15)
+```
+
+5. Deconvolution analysis
+The function computes linear and proportional correlations to produce cell subgroups of methods and
+signatures correlated for above a specific threshold within each cell type.
+```{r}
+deconvolution = fix.names.GEMDeCan(deconv)
+dt = compute.deconvolution.analysis(deconvolution, corr = 0.7)
+save(dt, file = "CellTFusion_Subgroups.RData")
+#Association of TFs modules with deconvolution 
+compute.modules.relationship(network[[1]], dt[[1]], "Deconvolution-TFs_Modules", vertical = T, height = 30, width = 10, pval = 0.1)
+```
+
+6. Identify cell groups from significant deconvolution features across TFs modules
+
+(7 sul html)
+
+Once deconvolution subgroups are calculated, a following pearson correlation is done across the different TFs modules to spot which features are significant associated (default pval < 0.05) with these TFs groups.
+
+features_sig = compute.modules.relationship(network[[1]], dt[[1]], "Deconvolution-TFs_Modules", width = 30, return = T)
+
+
+8. Identify cell groups
+
+Hierarchical clustering of the different cell groups is computed first across each TFs module independently and after across all at once. Different dendrograms are saved in your directory.
+
+
+```{r}
+features_sig = compute.modules.relationship(network[[1]], dt[[1]], return = T) # 7 html Ripetuto mi sa 
+cell_dendrograms = identify.cell.groups(dt[[1]], network[[1]], features_sig, height = 20) # 8 html 
+```

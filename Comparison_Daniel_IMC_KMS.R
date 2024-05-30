@@ -6,6 +6,60 @@ Daniel_cell_densities = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/
 random_sample = Daniel_cell_densities[sample(nrow(Daniel_cell_densities), 1),"immucan_id"] 
 filenames <- list.files("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Imaging/IMC/single_file_for_patient", pattern=random_sample, full.names=TRUE)
 
+############# Message form Daniel 
+# Hi Vera, 
+# Clearly something not right. Please do as follows:
+# 1) Calculate the area per ROI
+# 2) sum the area of all ROIs to obtain total measured tissue area per patient
+# 3) normalize area per mm2. The image_width and height are given in micrometers
+# 4) sum the cell types per patient and divide by the tissue area of each patient. Round number. 
+############
+
+IMC = read.csv(filenames, header = TRUE) %>%
+  group_by(ROI)
+
+Daniel_sample = filter(Daniel_cell_densities, immucan_id == random_sample)
+Daniel_sample = Daniel_sample %>%
+  column_to_rownames("immucan_id")
+rownames(Daniel_sample) = paste0(rownames(Daniel_sample), "_Daniel")
+
+# 1) Calculate the area per ROI
+max_min_area = IMC %>%
+  summarise(min_x = min(Pos_X),
+            max_x = max(Pos_X),
+            diff_x = max_x - min_x ,
+            min_y = min(Pos_Y),
+            max_y = max(Pos_Y),
+            diff_y = max_y - min_y, 
+            area_per_ROI = diff_x*diff_y)
+
+# 2) sum the area of all ROIs to obtain total measured tissue area per patient
+# 3) normalize area per mm2. The image_width and height are given in micrometers
+tot_area = sum(max_min_area$area_per_ROI)/1e-6
+
+
+IMC = read.csv(filenames, header = TRUE) %>%
+  group_by(celltypes)
+
+# 4) sum the cell types per patient and divide by the tissue area of each patient. Round number. 
+freq = IMC %>%
+  summarise(freq = n())
+freq[, "freq"] = round(freq[, "freq"])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## option 1: sum, every patch
 IMC = read.csv(filenames, header = TRUE) 
 
