@@ -1,3 +1,8 @@
+library(ggplot2)
+library(ggdendro)
+library(dendextend)
+
+
 filter_common_patients <- function(df1, df2) {
   # Find the common row names (patients) between the two data frames
   common_patients <- intersect(rownames(df1), rownames(df2))
@@ -39,26 +44,53 @@ counts_to_TPM <- function(raw_counts_file){
 
 
 # Plots - Heatmap
-Compute_Samples_Heatmap <- function(df, main_title = "", sub_title=""){
-  df <- as.matrix(df)
-  
+Compute_Samples_Heatmap <- function(df, sample_feat_df = NULL, main_title = NULL){
+
   # Utilizes the NormalizeTPM function from the ADImpute package.
   # Performs normalization on the 'TPM' data frame, considering TPM (Transcripts Per Million) values.
   # Setting 'log = T' indicates that the normalization will be done using the logarithm of TPM values.
   # This is often employed to reduce variance and approximate a normal distribution.
   # Add 1 at the log log(TPM+1) so that 0 values are propertly calculated
-  
   sampleDists <- dist(t(df), method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
   sampleDistMatrix <- as.matrix(sampleDists)
-  pheatmap(sampleDistMatrix, main = main_title, sub=sub_title, xlab="",
-           cex.lab = 1, cex.axis = 1, cex.main = 2, clustering_method = 'complete')
+  
+  # Set annotation_col for a color scheme on the side. Each rowname of sample_feat_df must match each row of sampleDistMatrix
+  sample = rownames(sampleDistMatrix)
+  sample_feat_df = sample_feat_df 
+  
+  pheatmap(sampleDistMatrix, main = main_title, xlab="",
+           annotation_col = sample_feat_df,
+           color = hcl.colors(50, "BluYl"),
+           show_colnames = F, show_rownames = F,
+           cex.lab = 1, cex.axis = 1, cex.main = 2, clustering_method = 'complete',
+           legend_breaks = c(min(sampleDistMatrix), max(sampleDistMatrix)),
+           legend_labels = c("Similar", "Distant"),
+           border = NA, 
+           width = 8, height = 8)
 }
 
+
 # Plots - Dendrogram
-Compute_Samples_dendrogram <- function(df){
-  sampleTree = hclust(dist(t(df), method = 'euclidean'), method = "complete");
-  plot(sampleTree, main = "Samples dendrogram", sub="", xlab="", 
-       cex = 0.5, cex.main = 1)
+Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, main_title = NULL){
+  # df = TPM_clinical
+  # sample_feat_df = clinical
+  # feat_column = "TIL_score"
+  sampleTree = hclust(dist(t(df), method = 'euclidean'), method = "complete")
+  
+  dend_expr <- as.dendrogram(sampleTree)
+  tree_labels<- dendro_data(dend_expr, type = "rectangle")
+  tree_labels$labels <- cbind(tree_labels$labels, feat = as.factor(sample_feat_df[,feat_column]))
+  
+  ggplot() +
+    geom_segment(data = segment(tree_labels), aes(x=x, y=y, xend=xend, yend=yend))+
+    geom_segment(data = tree_labels$segments %>%
+                   filter(yend == 0) %>%
+                   left_join(tree_labels$labels, by = "x"), aes(x=x, y=y.x, xend=xend, yend=yend, color = feat)) +
+    # geom_text(data = label(tree_labels), aes(x=x, y=y, label=label, colour = feat, hjust=0), size=1) +
+    coord_flip() +
+    scale_y_reverse(expand=c(0.2, 0)) +
+    scale_colour_brewer(palette = "Dark2", name = feat_column) + 
+    theme_dendro()
 }
 
 

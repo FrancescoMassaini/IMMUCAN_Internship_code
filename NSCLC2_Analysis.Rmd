@@ -25,6 +25,8 @@ suppressMessages(library(ggfortify))
 suppressMessages(library(rlang))
 suppressMessages(library(purrr))
 suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
 ```
 
 
@@ -83,7 +85,7 @@ TPM <- counts_to_TPM(merged_counts)
 # write.table(TPM, "../IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM.txt")
 ```
 
-# Analizing TPM
+# Analizing TPM 
 ```{r Distribution}
 # Summary and check TPM
 summary(TPM)
@@ -103,69 +105,161 @@ ggplot(TPM_long, aes(x = log1p(TPM)))+
        x = "log(TPM + 1)", 
        y = "Density")
 ```
-
-# TPM Analysis
-```{r Heatmap and dendrogram}
-# Heatmap and dendrogram to see patient outliers on TPM
-
-pdf(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.pdf"), width = 16, height = 16)
-Compute_Samples_Heatmap(TPM, main_title = "Sample heatmap", sub_title = "distance matrix on TPM data")
-dev.off()
-
-
-pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"), width = 16, height = 10)
-Compute_Samples_dendrogram(TPM)
-dev.off()
-
-
-# PCA biplot on TPM
-
-pca_result <- PCA(t(TPM), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
-fviz_eig(pca_result)
-
-pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
-factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
-dev.off()
+```{r}
+# 
 ```
 
+# TPM Analysis
+```{r, fig.width=8, fig.height=12, Heatmap and dendrogram}
+# Load clinical data 
+clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
+  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score) %>%
+  column_to_rownames(var = "immucan_id")
+
+# Adapt rownames of TPM to clinical ones
+TPM_clinical = TPM
+colnames(TPM_clinical) = gsub(pattern = "-FIXT.*", 
+                              replacement = "",
+                              x = colnames(TPM_clinical))
+common_samples <- intersect(rownames(clinical), colnames(TPM_clinical))
+TPM_clinical <- TPM_clinical %>% dplyr::select(all_of(common_samples))
+
+clinical <- clinical[rownames(clinical) %in% common_samples, ]
+
+# Heatmap on TPM, groups and outliers 
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.pdf"), width = 16, height = 16)
+Compute_Samples_Heatmap(TPM_clinical,  sample_feat_df = clinical, main_title = "Heatmap samples vs samples - Euclidian distance matrix on TPM data")
+# dev.off()
+```
+
+```{r}
+# Sample dendrograms, colored by relevant clinical feature
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"), width = 16, height = 10)
+for (feat in colnames(clinical)){
+  tree = Compute_Samples_dendrogram(TPM_clinical,  sample_feat_df = clinical, feat_column = feat, main_title = "Sample dendrogram - Euclidian distance matrix on TPM data")
+  print(tree)
+}
+# dev.off()
+```
+
+```{r}
+# PCA biplot on TPM
+pca_result <- FactoMineR::PCA(t(TPM_clinical), scale.unit = TRUE, graph = FALSE) # t(TPM) because PCA takes rows 
+fviz_eig(pca_result) # Scree plot: explained variances by PC
+
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
+for (feat in colnames(clinical)){
+  p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                              habillage = as.factor(clinical[,feat]),
+                              addEllipses = T, ellipse.level=0.85, palette = "Dark2", 
+                              legend.title = feat,
+                              ggtheme = theme_minimal())
+  print(p)
+}
+# repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+# dev.off()
+```
+
+```{r}
+# UMAP on TPM
+umap_result <- as.data.frame(umap(t(TPM_clinical), n_neighbors = 8, min_dist = 0.1, metric = "euclidean"))
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+```
+ 
 # Loading Deconvolution Data
 ```{r Loading Deconvolution}
 # Deconvoltion Data Loading
-input_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
-output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
-txt_input_files_deconvolution <- c("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt")
+input_folder_deconvolution <- "../IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
+output_folder_deconvolution <- "../IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
+txt_input_files_deconvolution <- c("../IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt")
 files_names_deconvolution <- gsub(".txt$", "", basename(txt_input_files_deconvolution))
 
 deconv <- read.table(txt_input_files_deconvolution, header = TRUE,  sep = '	', row.names = 1)
+rownames(deconv) = gsub(pattern = "-FIXT.*", 
+                              replacement = "",
+                              x = rownames(deconv))
+common_samples <- which(intersect(rownames(clinical), rownames(deconv))) 
+deconv <- deconv[common_samples,]
 
 ```
 
 # Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
 ```{r Deconvolution}
 # Sample clustering
-# pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.pdf"), width = 2000, height = 2000)
-png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.png"), width = 2000, height = 2000)
-Compute_Samples_Heatmap(t(deconv)) # double t() (here and in the function) to take into account rows
-dev.off()
+# png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_heatmap.png"), width = 2000, height = 2000)
+Compute_Samples_Heatmap(t(deconv),  sample_feat_df = clinical, main_title = "Heatmap deconvolution - samples vs samples - Euclidian distance matrix on deconvolution") # double t() (here and in the function) to take into account rows
 # dev.off()
 
-# pdf(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.pdf"), width = 2000, height = 2000)
-png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.png"), width = 2000, height = 1000)
-Compute_Samples_dendrogram(t(deconv))
-dev.off()
-# dev.off()
+#png(paste0(output_folder_deconvolution, files_names_deconvolution, "_deconvolution_samples_clustering.png"), width = 2000, height = 1000)
+for (feat in colnames(clinical)){
+  tree = Compute_Samples_dendrogram(t(deconv),  sample_feat_df = clinical, feat_column = feat, main_title = "Sample dendrogram on deconvolution - Euclidian distance matrix on TPM data")
+  print(tree)
+}
+#dev.off()
 
 # PCA
-pca_result <- PCA(deconv, scale.unit = TRUE, graph = FALSE) # t(deconv) because PCA takes rows 
+pca_result <- PCA(deconv, scale.unit = TRUE, graph = FALSE) 
 fviz_eig(pca_result)
 
-# pdf(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.pdf"))
-png(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.png"))
+# png(paste0(output_folder_deconvolution, "deconvolution_samples_PCA.png"))
 factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
-dev.off()
 # dev.off()
 
 ```
+```{r}
+# PCA on Deconvolution results
+pca_result <- FactoMineR::PCA(deconv, scale.unit = FALSE, graph = FALSE) # scale.unit  
+fviz_eig(pca_result) # Scree plot: explained variances by PC
+
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
+for (feat in colnames(clinical)){
+  p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                              habillage = as.factor(clinical[,feat]),
+                              addEllipses = T, ellipse.level=0.85, palette = "Dark2", 
+                              legend.title = feat,
+                              ggtheme = theme_minimal())
+  print(p)
+}
+# repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+# dev.off()
+```
+```{r}
+# UMAP on Deconvolution data
+
+umap_result <- as.data.frame(umap(deconv, n_neighbors = 8, min_dist = 0.1, metric = "euclidean"))
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+```
+
 
 # Benchmark of deconvolution results vs mIF data
 ```{r Correlation Deconv vs mIF}
