@@ -49,23 +49,17 @@ output_folder_CellTFusion <- "../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD22
 # Ottieni tutti i file .txt nella cartella
 txt_input_files <- list.files(path = input_folder, pattern = "\\.txt$", full.names = TRUE)
 
-# Stampa il contenuto della variabile txt_files
-# print(txt_input_files)
-
 files_names <- gsub(".txt$", "", basename(txt_input_files))
 samples_names = str_split_i(files_names, "_", 1)
 
 ```
 
-# load and processing data NSCLC2
+# Load and processing data NSCLC2
 ```{r Processing Raw Counts}
 
-# Merging all the patients files, filtering rows of input files, removing gene version, and converting to GENE SYMBOLS
-
+# Merging all the patients files removing gene version
 merged_counts <- read.delim(txt_input_files[1], header = 0, row.names = 1)
 colnames(merged_counts) <- samples_names[1]
-
-colSums(merged_counts) # Not yet normalized to TPM
 
 for (i in 2:length(txt_input_files)) {
     # Leggi il data frame successivo
@@ -75,40 +69,49 @@ for (i in 2:length(txt_input_files)) {
   merged_counts <- cbind(merged_counts, counts)
 }
 
-merged_counts <- merged_counts %>%
+cat("Sum of counts across samples: \n")
+colSums(merged_counts) # Not yet normalized to TPM
+
+# Deconvolution methods already take into account low expressed and low variance genes so we can directly compute TPM
+TPM_forDeconv = merged_counts %>%  
   filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>%
   remove_gene_version() %>%
-  EnsemblID_to_GeneSymbol()
+  EnsemblID_to_GeneSymbol() %>%
+  counts_to_TPM(., log=T)
+
+# write.table(TPM_forDeconv, "../IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM.txt")
+```
+# For basic clustering methods we need to start with filtering steps
+## 1. Filtering low expressed genes
+```{r Distribution}
+compute_distribution(data = merged_counts, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
+merged_counts_forClustering = merged_counts %>%
+  filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>%
+  remove_gene_version() %>%
+  filter_low_expr_genes(., avg_expr_threshold = 5, zero_count_percent_threshold = 0.9) 
+
+compute_distribution(data = merged_counts_forClustering, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+```
+## 2. Filtering low variance genes
+```{r}
+# filtering out not useful rows and converting to GENE SYMBOLS
+merged_counts_forClustering_gene_symbol <- merged_counts_forClustering %>%
+  EnsemblID_to_GeneSymbol() # here many genes will be deleted due to the duplicated genes found with the conversion to gene symbol
 
 # ADImpute to normalize to TPM
-TPM <- counts_to_TPM(merged_counts)
-# write.table(TPM, "../IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM.txt")
+TPM_forClustering <- counts_to_TPM(merged_counts_forClustering_gene_symbol, log = F) %>% # not yet log2 transformed
+  filter_low_variance_genes(., quantile_threshold = 0.05)
+
+cat("Number of final genes:", nrow(TPM_forClustering) )
+
+compute_distribution(data = merged_counts_forClustering_gene_symbol, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
+TPM_forClustering = log2(TPM_forClustering+1)
+colSums(TPM_forClustering)
 ```
 
 # Analizing TPM 
-```{r Distribution}
-# Summary and check TPM
-summary(TPM)
-colSums(TPM) # NOTE, this doesn't sum up to 1 million anymore because when you convert ENSEMBL IDs to GENE SYMBOLS some genes are lost because of duplicates names
-
-TPM_with_genes <- TPM %>%
-  rownames_to_column(var = "Gene")
-
-TPM_long <- pivot_longer(TPM_with_genes, 
-                         cols = -Gene,
-                         names_to = "Patient",
-                         values_to = "TPM") 
-
-ggplot(TPM_long, aes(x = log1p(TPM)))+
-  geom_density()+ theme_bw() +
-  labs(title = "log(TPM+1) Distribution", 
-       x = "log(TPM + 1)", 
-       y = "Density")
-```
-```{r}
-# 
-```
-
 # TPM Analysis
 ```{r, fig.width=8, fig.height=12, Heatmap and dendrogram}
 # Load clinical data 
@@ -117,7 +120,7 @@ clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R
   column_to_rownames(var = "immucan_id")
 
 # Adapt rownames of TPM to clinical ones
-TPM_clinical = TPM
+TPM_clinical = TPM_forClustering
 colnames(TPM_clinical) = gsub(pattern = "-FIXT.*", 
                               replacement = "",
                               x = colnames(TPM_clinical))

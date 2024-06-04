@@ -24,24 +24,103 @@ remove_gene_version <- function(df_with_gene_version) {
 
 # Converting from ENSEMBL ID to GENE SYMBOL. Use org.Hs.eg.db db 
 EnsemblID_to_GeneSymbol <- function(raw_counts_file){
+  raw_counts_file = merged_counts %>%
+    remove_gene_version()
   entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(raw_counts_file), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your raw_counts_file 
-  raw_counts_file <- raw_counts_file %>%
+  raw_counts_file_gene_symbol <- raw_counts_file %>%
     mutate(ENSEMBL = rownames(raw_counts_file)) %>% # add a column
     inner_join(., entrz, by="ENSEMBL") %>% # join, merge df with a common column (ENSEMBL)
     dplyr::filter(!is.na(SYMBOL)) %>%
-    distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
-    column_to_rownames("SYMBOL") %>% 
-    dplyr::select(., -c("ENSEMBL"))
-  return(raw_counts_file)  
+    dplyr::select(-ENSEMBL) %>%
+    group_by(SYMBOL) %>%
+    summarise(across(everything(), list(mean)), .groups = 'drop') %>% # take the average of duplicated rows
+    # distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
+    column_to_rownames("SYMBOL") 
+  colnames(raw_counts_file_gene_symbol) = gsub(pattern = "_1$", replacement = "", x = colnames(raw_counts_file_gene_symbol))
+  
+  # eliminated_genes = setdiff(rownames(raw_counts_file), raw_counts_file_gene_symbol[,"ENSEMBL"])
+  # gene_expression_sum <- rowSums(raw_counts_file)
+  # gene_expression_sum_eliminated_genes = rowSums(raw_counts_file[eliminated_genes,])
+  # 
+  # high_expression_threshold <- quantile(gene_expression_sum, 0.75)  #
+  # highly_expressed_eliminated_genes <- eliminated_genes[gene_expression_sum_eliminated_genes > high_expression_threshold]
+  
+  cat("Number of genes before gene symbol conversion:", nrow(raw_counts_file), "\n", "Number of genes after conversion:", nrow(raw_counts_file_gene_symbol), "\n", "Number of lost genes:", nrow(raw_counts_file) - nrow(raw_counts_file_gene_symbol))
+  cat("\n")
+  return(raw_counts_file_gene_symbol)  
 }
 
 # Raw counts to TPM. Need GENE SYMBOL!
-counts_to_TPM <- function(raw_counts_file){
+counts_to_TPM <- function(raw_counts_file, log = T){
   # log2(TPM+1) 
-  TPM <- ADImpute::NormalizeTPM(raw_counts_file, log = T)
+  TPM <- ADImpute::NormalizeTPM(raw_counts_file, log = log)
   return(as.data.frame(TPM))  
 }
 
+# Define a function to filter genes based on average expression and zero count frequency
+filter_low_expr_genes <- function(data, avg_expr_threshold = 10, zero_count_percent_threshold = 0.9) {
+  # Calculate the mean expression for each gene
+  # Calculate the frequency of zero counts for each gene
+  data %>%
+    mutate(
+      mean_expression = rowMeans(.),  # Add a column for the mean expression of each gene
+      zero_count_frequency = rowSums(. == 0) / ncol(.)  # Add a column for the frequency of zero counts
+    ) %>%
+    filter(
+      mean_expression >= avg_expr_threshold,  # Filter genes with mean expression below the threshold
+      zero_count_frequency <= zero_count_percent_threshold  # Filter genes with a high frequency of zero counts
+    ) %>%
+    dplyr::select(-mean_expression, -zero_count_frequency)  # Select only the original count columns for the output
+}
+
+# Define a function to filter genes based on variance
+filter_low_variance_genes <- function(data, quantile_threshold = 0.05) {
+  
+  # Calculate the variance for each gene and filter
+  df = as.data.frame(rowVars(as.matrix(data)))
+  colnames(df) = "variance"
+  df = rownames_to_column(df, var = "genes")
+  
+  # Genes to keep
+  keep = df[df$variance > quantile(df$variance, prob = quantile_threshold), "genes"]
+    
+  data = data[keep, ]
+  return(data)
+}
+
+# Plots - Distribution
+compute_distribution <- function(data, plot_title, xlab, ylab = "Density", use_log = TRUE) {
+  # Convert row names to a column
+  data_with_genes <- data %>%
+    rownames_to_column(var = "Genes")
+  
+  # Pivot data to long format
+  data_long <- pivot_longer(data_with_genes, 
+                            cols = -Genes,
+                            names_to = "Patient",
+                            values_to = "Counts")
+  
+  # Calculate log2(value+1) if use_log is TRUE, otherwise use the direct value
+  if (use_log) {
+    # Create density plot
+    plot <- ggplot(data_long, aes(x=log2(Counts+1))) +
+      geom_density() +
+      theme_bw() +
+      labs(title = plot_title, 
+           x = xlab, 
+           y = ylab)
+  }
+  else {
+    plot <- ggplot(data_long, aes(x=Counts)) +
+      geom_density() +
+      theme_bw() +
+      labs(title = plot_title, 
+           x = xlab, 
+           y = ylab)
+  }
+  
+  return(plot)
+}
 
 # Plots - Heatmap
 Compute_Samples_Heatmap <- function(df, sample_feat_df = NULL, main_title = NULL){
