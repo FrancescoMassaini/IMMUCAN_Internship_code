@@ -4,36 +4,33 @@ title: "BC2"
 author: "Francesco Massaini"
 date: "2024-03-28"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Imports
 ```{r Imports}
-library(dplyr)
-library(tibble)
-library(tidyr)
-library(org.Hs.eg.db) # Homo sapiens db
-library(stringr)
-library(RColorBrewer) # for plot
-library(pheatmap) # for heatmaps
-library(ADImpute) # This package provides functions to compute TPM
-library(ggplot2)
-library(FactoMineR)
-library(factoextra)
-library(survival)
-library(ranger)
-library(ggfortify)
-library(rlang)
-library(purrr)
-library(rio)
-
+suppressMessages(library(dplyr)) 
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(org.Hs.eg.db)) # Homo sapiens db
+suppressMessages(library(stringr))
+suppressMessages(library(RColorBrewer)) # for plot
+suppressMessages(library(pheatmap)) # for heatmaps
+suppressMessages(library(ADImpute)) # This package provides functions to compute TPM
+suppressMessages(library(ggplot2))
+suppressMessages(library(FactoMineR))
+suppressMessages(library(factoextra))
+suppressMessages(library(survival))
+suppressMessages(library(ranger))
+suppressMessages(library(ggfortify))
+suppressMessages(library(rlang))
+suppressMessages(library(purrr))
+suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
+suppressMessages(library(readxl))
 ```
-
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(fig.width=10, fig.height=10)
-
-```
-
 
 # Functions
 ```{r Functions}
@@ -42,9 +39,9 @@ source("./Functions.R")
 
 # Path and folders
 ```{r Data loading}
-output_folder_TPM <- "/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/"
-output_folder_deconvolution <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
-output_folder_CellTFusion <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/" 
+output_folder_TPM <- "../IMMUCAN_data/BC2/02_TPM/"
+output_folder_deconvolution <- "../IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
+output_folder_CellTFusion <- "../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/" 
 ```
 
 # 01 We don't need to process raw BC2 data cause we got the final TPM from Andrea
@@ -52,58 +49,306 @@ output_folder_CellTFusion <- "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCL
 ## ADD the comparison between raw counts processing with ADImpute and Andrea results
 ```
 
-# 02 Analizing TPM
-```{r Distribution}
-TPM = load("../IMMUCAN_data/BC2/02_TPM/BC2_estimated_TPM.RData")
+# 02 BC2 Filtering Samples and saving file
+```{r Filtering samples}
+TPM = load("../IMMUCAN_data/BC2/02_TPM/BC2_estimated_TPM_fromAndrea.RData")
 colSums(gexp_tpm) 
 
 TPM = remove_gene_version(gexp_tpm)
-TPM = EnsemblID_to_GeneSymbol(TPM)
 
-# Summary and check if these are really TPM
-summary(TPM)
-colSums(TPM) # NOTE, this doesn't sum up to 1 million because when you convert ENSEMBL IDs to GENE SYMBOLS we lose 20k genes cause there are duplicates names
-
-TPM_with_genes <- TPM %>%
-  rownames_to_column(var = "Gene")
-
-TPM_long <- pivot_longer(TPM_with_genes, 
-                         cols = -Gene,
-                         names_to = "Patient",
-                         values_to = "TPM") 
-
-ggplot2::ggplot(TPM_long, aes(x = log1p(TPM)))+
-  geom_density()+ theme_bw() +
-  labs(title = "log(TPM+1) Distribution", 
-       x = "log(TPM + 1)", 
-       y = "Density")
-```
-
-# 03 BC2 Filtering Samples and saving file
-```{r Filtering samples}
 # Filtering samples with the list samples_list
-samples_list = read.delim("../IMMUCAN_data/BC2/Patient_to_include_from_rna_samples_bc2_to_create_custom_cohort.tsv")
+samples_list = read_xlsx("../IMMUCAN_data/BC2/01_Reference_files_from_Andrea_BC2_TNBC/List_samples_data_type/rna_samples_bc2_custom_cohort.xlsx")
+cat("Numb of rows in Andrea expr list ", nrow(samples_list), "\nNumber of unique samples", length(unique(samples_list$sample)), "\n Duplicated sample:", samples_list[which(duplicated(samples_list[,"sample"])),"sample"][[1]]) 
 
 BC2_samples <- intersect(colnames(TPM), samples_list$sample)
-BC2 <- TPM[,BC2_samples] 
+cat("Sample(s) in RData not present in sample_list (duplicated samples in sample_list are not shown):", setdiff(samples_list$sample, BC2_samples))
+TPM <- TPM[,BC2_samples] 
 
-write.csv(BC2, file = "../IMMUCAN_data/BC2/02_TPM/BC2_fromAndreaRdata_filtered_Samples.csv")
+# Deconvolution methods already take into account low expressed and low variance genes so we can directly save TPM
+BC2_forDeconv = TPM
+# write.csv(BC2_forDeconv, file = "../IMMUCAN_data/BC2/02_TPM/BC2_fromAndreaRdata_filtered_Samples.csv")
 ```
 
-# 04 TPM Analysis
-```{r Heatmap and dendrogram}
-# Heatmap and dendrogram to see patient outliers on TPM
+# 03 Analizing TPM
+```{r Distribution}
+# Let's see the initial distribution
+compute_distribution(data = TPM, plot_title = "Distribution of TPM", xlab = "log2(TPM+1)", use_log = T) # log2(x+1)
 
-Compute_Samples_dendrogram(BC2)
-Compute_Samples_Heatmap(BC2)
+# Note: since counts are not available but we start directly from TPM we can't filter low expressed genes based on count values. Let's filter on TPM values 
+TPM_filtered_forClustering = TPM %>%
+  filter_low_expr_genes(., avg_expr_threshold = 1, zero_count_percent_threshold = 0.9)
+# Remove low variance genes too
+TPM_filtered_forClustering <- TPM_filtered_forClustering %>% # not yet log2 transformed
+  filter_low_variance_genes(., quantile_threshold = 0.2)
 
+cat("Number of final genes:", nrow(TPM_filtered_forClustering), "\n Number of starting genes:",  nrow(TPM), "\n Difference:", nrow(TPM)-nrow(TPM_filtered_forClustering))
+
+# Distribution after filtering
+compute_distribution(data = TPM_filtered_forClustering, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
+# Finally convert TPM to log2(TPM+1)
+TPM_filtered_forClustering = log2(TPM_filtered_forClustering+1)
+
+```
+
+# Analizing filtered TPM 
+## Sample Heatmap
+NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r, fig.width=10, fig.height=10, Heatmap}
+# Load clinical data and clinical samples list 
+clinical_patients_list = read_xlsx("../IMMUCAN_data/BC2/01_Reference_files_from_Andrea_BC2_TNBC/BC2_pCR_should_be_ok.xlsx", col_names = FALSE)
+colnames(clinical_patients_list) = c("Patients", "Notes")
+
+# Filtering with Andrea list, we end up with only ~30 patients when intersecated with clinical and less than 25 when intersecated with bulk data. Let's keep patients present in our bulk dataset 
+# length(intersect(clinical_patients_list$Patients, str_remove_all(colnames(TPM_filtered_forClustering), pattern = "-FIXT-0[0-9]"))) 
+
+# clinical_all_columns = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240602.tsv", sep = "\t") %>%
+#   dplyr::filter(immucan_patient_id %in% clinical_patients_list$Patients) %>%
+#   dplyr::select(where(~ sum(!is.na(.)) >= 20))
+# cat("Numb of patients:", length(unique(clinical_all_columns$immucan_patient_id)) , "\nNumb of samples: ", nrow(clinical_all_columns),"\n Not present patients:", setdiff(clinical_patients_list$Patients,unique(clinical_all_columns$immucan_patient_id)))
+
+clinical_all_columns = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240602.tsv", sep = "\t") %>%
+  dplyr::filter(immucan_sample_id %in% colnames(TPM_filtered_forClustering)) %>%
+  dplyr::select(where(~ sum(!is.na(.)) >= 20))
+cat("Numb of samples:", length(unique(clinical_all_columns$immucan_sample_id)) , "\n Not present samples:", setdiff(colnames(TPM_filtered_forClustering), clinical_all_columns$immucan_sample_id))
+
+relevant_clinical_columns = c("immucan_patient_id",
+      "immucan_sample_id",
+      "surgery_days_after_diag",
+      "sampling_days_after_diag",
+      "lymphocyte_infiltration",
+      "PCR",
+      "residual_cancer_burden",
+      "residual_disease",
+      # "sex", # obviously not so interesting for BC
+      # "HER2_status", # all negative
+      # "ER_status", # all negative
+      # "PR_status", # only 1 patient positive
+      "KI67_status",
+      "laterality",
+      # "disease_evolution", # only three 1 values
+      "stage",
+      "N_stage",
+      # "M_stage", # only cM0 or unknown 
+      "T_stage")
+
+clinical_surv = clinical_all_columns[, c("immucan_patient_id",
+      "immucan_sample_id",
+      "surgery_days_after_diag",
+      "sampling_days_after_diag",
+      "lymphocyte_infiltration",
+      "PCR")]
+
+# Filter clinical with only relevant columns and mutate absent ("") values to NA
+clinical = clinical_all_columns[, relevant_clinical_columns] %>%
+  dplyr::select(-all_of(c("surgery_days_after_diag","sampling_days_after_diag", "immucan_patient_id"))) %>% # remove even immucan_patient_id for better further rapresentations
+  mutate(PCR = if_else(PCR == "", NA, PCR)) %>%
+  mutate(stage = if_else(stage == "", NA, stage)) %>%
+  mutate(lymphocyte_infiltration = if_else(lymphocyte_infiltration == "", NA, lymphocyte_infiltration)) %>%
+  mutate(lymphocyte_infiltration = if_else(lymphocyte_infiltration == "Not Applicable", "Not applicable", lymphocyte_infiltration)) %>%
+  mutate(residual_cancer_burden = if_else(residual_cancer_burden == "", NA, residual_cancer_burden)) %>%
+  mutate(residual_disease = if_else(PCR == "", NA, residual_disease)) %>%
+  column_to_rownames(var = "immucan_sample_id")
+
+common_samples <- intersect(rownames(clinical), colnames(TPM_filtered_forClustering))
+TPM_filtered_forClustering <- TPM_filtered_forClustering %>% dplyr::select(all_of(common_samples))
+
+clinical <- clinical[rownames(clinical) %in% common_samples, ]
+
+# Heatmap on TPM, groups and outliers 
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.pdf"), width = 16, height = 16)
+Compute_Samples_Heatmap(TPM_filtered_forClustering,  sample_feat_df = clinical, main_title = "Heatmap samples vs samples - Euclidian distance matrix on TPM data") 
+# dev.off()
+
+```
+
+## Sample Dendrogram
+```{r}
+# Sample dendrograms, colored by relevant clinical feature
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"), width = 16, height = 10)
+for (feat in colnames(clinical)){
+  tree = Compute_Samples_dendrogram(TPM_filtered_forClustering,  sample_feat_df = clinical, feat_column = feat, main_title = "Sample dendrogram - Euclidian distance matrix on TPM data", palette_colors = "Paired")
+  print(tree)
+}
+# dev.off()
+```
+## PCA biplot
+```{r}
 # PCA biplot on TPM
-pca_result <- PCA(t(BC2), scale.unit = TRUE, graph = FALSE) # t(BC2) because PCA takes rows 
-fviz_eig(pca_result)
 
-factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+# Ensure to merge in the same order TPM and clinical values and traspose 
+tmp = dfs_same_patients_same_order(TPM_filtered_forClustering, clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE) # expr_patients_on_rows = TRUE Patients on ROWS
+TPM_filtered_forClustering = tmp[["expression_data"]]
+clinical = tmp[["clinical_data"]] %>%
+  replace(is.na(.), "NA") # Replace NA with missing to show NA values on fviz_pca_biplot
+
+# Compute PCA
+pca_result <- FactoMineR::PCA(TPM_filtered_forClustering, scale.unit = TRUE, graph = FALSE)  
+fviz_eig(pca_result) # Scree plot: explained variance by PC
+
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
+for (feat in colnames(clinical)){
+  p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                              habillage = as.factor(clinical[,feat]),
+                              addEllipses = T, ellipse.level=0.95, palette = "Dark2", 
+                              legend.title = feat,
+                              ggtheme = theme_minimal())
+  print(p)
+}
+# repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+# dev.off()
+```
+## Umap 
+```{r}
+# UMAP on TPM
+clinical <- clinical %>% 
+  mutate(across(everything(), ~ifelse(. == "NA", NA, .))) # Restore NA 
+
+umap_result <- as.data.frame(umap(TPM_filtered_forClustering, n_neighbors = 8, min_dist = 0.1, metric = "euclidean")) # t() it's not necessary beacuse TPM has been already transposed
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+
+TPM_filtered_forClustering = as.data.frame(t(TPM_filtered_forClustering))
+```
+# IDA BIODICA Analysis
+## Conversion to GENE SYMBOLS for BIODICA 
+```{r}
+TPM_gene_symbols = TPM_filtered_forClustering %>%
+  EnsemblID_to_GeneSymbol(., aggregation_method = "mean") # Duplicated gene symbols are aggregated by average
+
+# Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
+TPM_forBIODICA = TPM_gene_symbols %>%
+  rownames_to_column(var = "genes")
+write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_BC2_Biodica_meanDuplGenes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+## IDA Analysis
+```{r IDA}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_BC2_Biodica_meanDuplGenes_ICA/TPM_BC2_Biodica_meanDuplGenes_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_BC2_Biodica_meanDuplGenes_ICA/TPM_BC2_Biodica_meanDuplGenes_ica_S.xls", header = TRUE, row.names = 1)
+
+# Ensure the starting dfs have the same order
+tmp = dfs_same_patients_same_order(expr_df = as.data.frame(t(metasample_df)), sample_feat_df = clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
+metasample_df = tmp[["expression_data"]]
+clinical = tmp[["clinical_data"]]
+
+# Heatmap configuration
+heatmap_colors <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+# Show results
+metasample_df <- t(as.matrix(metasample_df))
+identical(colnames(metasample_df), rownames(clinical))
+
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Order most important IC and use the same order for clinical samples
+chosen_IC = "IC2"
+order <- order(metasample_df[chosen_IC, ], decreasing = TRUE)
+metasample_df <- metasample_df[, order, drop = FALSE]
+clinical <- clinical[order, , drop = FALSE]
+metasample_df <- metasample_df[c(chosen_IC, setdiff(rownames(metasample_df), chosen_IC)), ]
+identical(colnames(metasample_df), rownames(clinical))
+
+
+# Plot final SAMPLE heatmap
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = FALSE,
+         cluster_rows = FALSE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Prepare the data
+# Convert 'metasample_df' into a long format
+long_metasample <- as.data.frame(t(metasample_df)) %>% 
+  tibble::rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "IC", values_to = "Value")
+
+clinical = rownames_to_column(clinical, var = "Sample")
+
+# Join clinical data with the long format data
+combined_data <- as.data.frame(left_join(long_metasample, clinical, by = "Sample"))
+
+# Generate violin plots for each IC for each clinical variable
+clinical_vars = colnames(clinical)[-1]  # List of clinical variables
+ICs = unique(combined_data$IC)
+
+# Aggregate violin plot for each clinical variable
+for (clin_var in clinical_vars) {
+  tmp_clinical = clinical[, c("Sample", clin_var)]
+  colnames(tmp_clinical) = c("Sample", "clin")
+  merged <- left_join(long_metasample, tmp_clinical, by = "Sample")
+  
+  p <- ggplot(merged, aes(x = clin, y = Value, fill = clin)) +
+        geom_violin(trim = FALSE) +
+        geom_jitter(width = 0.1, alpha = 0.2, size = 1.5, color = "black") +
+        labs(title = paste("Violin plot of", clin_var), y = "IC Level", x = clin_var, fill = clin_var) +
+        facet_wrap(~IC) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(p)
+}
+
+# Specific significant violin plot
+p_threshold = 0.05
+
+for (clin_var in clinical_vars) {
+  for (IC_value in ICs){
+    df = combined_data %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Value, all_of(clin_var))
+    colnames(df) = c("Value", "clin")
+    
+    test_result <- aov(Value ~ clin, data = df)
+    summary_test_result <- summary(test_result)
+    p_value = summary_test_result[[1]]$'Pr(>F)'[1]
+    
+    if (!is.na(p_value) && p_value < p_threshold) {  # Check p-value
+      p <- ggplot(df, aes(x = clin, y = Value, fill = clin)) +
+            geom_violin(trim = FALSE) +
+            geom_jitter(width = 0.2, alpha = 0.5, size = 1.5, color = "black") +
+            labs(title = paste("Significant Violin plot of", clin_var, "for", IC_value), y = "IC Level", x = clin_var, fill = clin_var) +
+            theme_minimal() +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      print(p)
+    }
+  }
+}
+
+
 
 ```
+
+
+
+
+
+
 
 # 05 Loading Deconvolution Data
 ```{r Loading Deconvolution}

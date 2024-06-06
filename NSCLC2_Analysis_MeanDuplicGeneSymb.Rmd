@@ -100,7 +100,7 @@ compute_distribution(data = merged_counts_filtered_forClustering, plot_title = "
 ```{r}
 # filtering out not useful rows and converting to GENE SYMBOLS
 merged_counts_filtered_forClustering_gene_symbol <- merged_counts_filtered_forClustering %>%
-  EnsemblID_to_GeneSymbol() # here many genes will be deleted due to the duplicated genes found with the conversion to gene symbol
+  EnsemblID_to_GeneSymbol(., aggregation_method = "mean") # here many genes will be deleted due to the duplicated genes found with the conversion to gene symbol
 
 # ADImpute to normalize to TPM
 TPM_filtered_forClustering <- counts_to_TPM(merged_counts_filtered_forClustering_gene_symbol, log = F) %>% # not yet log2 transformed
@@ -117,7 +117,7 @@ colSums(TPM_filtered_forClustering)
 # Analizing filtered TPM 
 ## Sample Heatmap
 NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns 
-```{r, fig.width=8, fig.height=10, Heatmap}
+```{r, fig.width=10, fig.height=10, Heatmap}
 # Load clinical data 
 clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
   dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score) %>%
@@ -140,10 +140,9 @@ Compute_Samples_Heatmap(TPM_formatted_for_clinical,  sample_feat_df = clinical, 
 # dev.off()
 
 # Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
-#write.table(TPM_formatted_for_clinical, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica.txt", sep = "\t", row.names = TRUE, header = TRUE)
 TPM_forBIODICA = TPM_formatted_for_clinical %>%
   rownames_to_column(var = "genes")
-write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 ```
 ## Sample Dendrogram
 ```{r}
@@ -164,7 +163,7 @@ for (feat in colnames(clinical)){
 tmp = dfs_same_patients_same_order(TPM_formatted_for_clinical, clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
 TPM_formatted_for_clinical = tmp[["expression_data"]]
 clinical = tmp[["clinical_data"]] %>%
-  replace(is.na(.), "MISSING") # Replace NA with missing to show NA values on fviz_pca_biplot
+  replace(is.na(.), "NA") # Replace NA with missing to show NA values on fviz_pca_biplot
 
 # Compute PCA
 pca_result <- FactoMineR::PCA(TPM_formatted_for_clinical, scale.unit = TRUE, graph = FALSE)  
@@ -174,7 +173,7 @@ fviz_eig(pca_result) # Scree plot: explained variance by PC
 for (feat in colnames(clinical)){
   p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
                               habillage = as.factor(clinical[,feat]),
-                              addEllipses = T, ellipse.level=0.85, palette = "Dark2", 
+                              addEllipses = T, ellipse.level=0.95, palette = "Dark2", 
                               legend.title = feat,
                               ggtheme = theme_minimal())
   print(p)
@@ -206,13 +205,15 @@ for (feat in colnames(clinical_umap)[-1]){
     labs(color = feat)
     print(umap_plot)
 }
+
+TPM_formatted_for_clinical = as.data.frame(t(TPM_formatted_for_clinical))
 ```
 
 # IDA BIODICA Analysis
 ```{r IDA}
 # Load MetaSample and MetaGene from BIODICA analysis. 
-metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_ICA/TPM_NSCLC2_Biodica_ica_A.xls", header = TRUE, row.names = 1)
-metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_ICA/TPM_NSCLC2_Biodica_ica_S.xls", header = TRUE, row.names = 1)
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_ica_S.xls", header = TRUE, row.names = 1)
 
 # Load clinical data 
 clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
@@ -227,14 +228,25 @@ clinical = tmp[["clinical_data"]]
 # Heatmap configuration
 heatmap_colors <- colorRampPalette(c("navy", "white", "firebrick"))(100)
 
-# Order most important IC and use the same order for clinical samples
+# Show results
 metasample_df <- t(as.matrix(metasample_df))
 identical(colnames(metasample_df), rownames(clinical))
 
-# Ordina in base alla prima componente indipendente (IC1)
-order <- order(metasample_df["IC1", ], decreasing = TRUE)
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Order most important IC and use the same order for clinical samples
+chosen_IC = "IC4"
+order <- order(metasample_df[chosen_IC, ], decreasing = TRUE)
 metasample_df <- metasample_df[, order, drop = FALSE]
 clinical <- clinical[order, , drop = FALSE]
+metasample_df <- metasample_df[c(chosen_IC, setdiff(rownames(metasample_df), chosen_IC)), ]
 identical(colnames(metasample_df), rownames(clinical))
 
 
@@ -243,9 +255,71 @@ pheatmap(metasample_df, main = "",
          annotation_col = clinical,
          color = heatmap_colors,
          cluster_cols = FALSE,
+         cluster_rows = FALSE,
          show_colnames = T, show_rownames = T,
          fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
          border = NA)
+
+
+# Prepare the data
+# Convert 'metasample_df' into a long format
+long_metasample <- as.data.frame(t(metasample_df)) %>% 
+  tibble::rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "IC", values_to = "Value")
+
+clinical = rownames_to_column(clinical, var = "Sample")
+
+# Join clinical data with the long format data
+combined_data <- as.data.frame(left_join(long_metasample, clinical, by = "Sample"))
+
+# Generate violin plots for each IC for each clinical variable
+clinical_vars = colnames(clinical)[-1]  # List of clinical variables
+ICs = unique(combined_data$IC)
+
+# Aggregate violin plot for each clinical variable
+for (clin_var in clinical_vars) {
+  tmp_clinical = clinical[, c("Sample", clin_var)]
+  colnames(tmp_clinical) = c("Sample", "clin")
+  merged <- left_join(long_metasample, tmp_clinical, by = "Sample")
+  
+  p <- ggplot(merged, aes(x = clin, y = Value, fill = clin)) +
+        geom_violin(trim = FALSE) +
+        geom_jitter(width = 0.1, alpha = 0.2, size = 1.5, color = "black") +
+        labs(title = paste("Violin plot of", clin_var), y = "IC Level", x = clin_var, fill = clin_var) +
+        facet_wrap(~IC) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(p)
+}
+
+# Specific significant violin plot
+p_threshold = 0.05
+
+for (clin_var in clinical_vars) {
+  for (IC_value in ICs){
+    df = combined_data %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Value, all_of(clin_var))
+    colnames(df) = c("Value", "clin")
+    
+    test_result <- aov(Value ~ clin, data = df)
+    summary_test_result <- summary(test_result)
+    p_value = summary_test_result[[1]]$'Pr(>F)'[1]
+    
+    if (!is.na(p_value) && p_value < p_threshold) {  # Check p-value
+      p <- ggplot(df, aes(x = clin, y = Value, fill = clin)) +
+            geom_violin(trim = FALSE) +
+            geom_jitter(width = 0.2, alpha = 0.5, size = 1.5, color = "black") +
+            labs(title = paste("Significant Violin plot of", clin_var, "for", IC_value), y = "IC Level", x = clin_var, fill = clin_var) +
+            theme_minimal() +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      print(p)
+    }
+  }
+}
+
+
+
 ```
 
 

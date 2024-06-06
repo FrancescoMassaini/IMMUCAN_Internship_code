@@ -51,29 +51,30 @@ remove_gene_version <- function(df_with_gene_version) {
 }
 
 # Converting from ENSEMBL ID to GENE SYMBOL. Use org.Hs.eg.db db 
-EnsemblID_to_GeneSymbol <- function(raw_counts_file){
-  raw_counts_file = merged_counts %>%
-    remove_gene_version()
+EnsemblID_to_GeneSymbol <- function(raw_counts_file, aggregation_method = "mean"){
+
   entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(raw_counts_file), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your raw_counts_file 
   raw_counts_file_gene_symbol <- raw_counts_file %>%
     mutate(ENSEMBL = rownames(raw_counts_file)) %>% # add a column
     inner_join(., entrz, by="ENSEMBL") %>% # join, merge df with a common column (ENSEMBL)
     dplyr::filter(!is.na(SYMBOL)) %>%
     dplyr::select(-ENSEMBL) %>%
-    group_by(SYMBOL) %>%
-    summarise(across(everything(), list(mean)), .groups = 'drop') %>% # take the average of duplicated rows
-    # distinct(SYMBOL, .keep_all = T) %>% # keep only one variable of the duplicated symbols
-    column_to_rownames("SYMBOL") 
+    group_by(SYMBOL)
+  
+  # Duplicated gene symbols aggregation based on the specified method 
+  if (aggregation_method == "mean") {
+    raw_counts_file_gene_symbol <- raw_counts_file_gene_symbol %>%
+      summarise(across(everything(), mean), .groups = 'drop') %>% # take the average of duplicated rows
+      column_to_rownames("SYMBOL")
+  } else if (aggregation_method == "sum") {
+    raw_counts_file_gene_symbol <- raw_counts_file_gene_symbol %>%
+      summarise(across(everything(), sum), .groups = 'drop') %>% # take the sum of duplicated rows
+      column_to_rownames("SYMBOL")
+  }
+  
   colnames(raw_counts_file_gene_symbol) = gsub(pattern = "_1$", replacement = "", x = colnames(raw_counts_file_gene_symbol))
   
-  # eliminated_genes = setdiff(rownames(raw_counts_file), raw_counts_file_gene_symbol[,"ENSEMBL"])
-  # gene_expression_sum <- rowSums(raw_counts_file)
-  # gene_expression_sum_eliminated_genes = rowSums(raw_counts_file[eliminated_genes,])
-  # 
-  # high_expression_threshold <- quantile(gene_expression_sum, 0.75)  #
-  # highly_expressed_eliminated_genes <- eliminated_genes[gene_expression_sum_eliminated_genes > high_expression_threshold]
-  
-  cat("Number of genes before gene symbol conversion:", nrow(raw_counts_file), "\n", "Number of genes after conversion:", nrow(raw_counts_file_gene_symbol), "\n", "Number of lost genes:", nrow(raw_counts_file) - nrow(raw_counts_file_gene_symbol))
+  cat("Number of genes before gene symbol conversion:", nrow(raw_counts_file), "\n", "Number of genes after conversion:", nrow(raw_counts_file_gene_symbol), "\n", "Difference:", nrow(raw_counts_file) - nrow(raw_counts_file_gene_symbol))
   cat("\n")
   return(raw_counts_file_gene_symbol)  
 }
@@ -165,7 +166,7 @@ Compute_Samples_Heatmap <- function(df, sample_feat_df = NULL, main_title = NULL
            annotation_col = sample_feat_df,
            color = hcl.colors(50, "BluYl"),
            show_colnames = T, show_rownames = T,
-           fontsize_col = 5, fontsize_row = 5, fontsize = 5, clustering_method = 'complete',
+           fontsize_col = 5, fontsize_row = 5, fontsize = 10, clustering_method = 'complete',
            legend_breaks = c(min(sampleDistMatrix), max(sampleDistMatrix)),
            legend_labels = c("Similar", "Distant"),
            border = NA)
@@ -173,7 +174,7 @@ Compute_Samples_Heatmap <- function(df, sample_feat_df = NULL, main_title = NULL
 
 
 # Plots - Dendrogram
-Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, main_title = NULL){
+Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, main_title = NULL, palette_colors = "Dark2"){
   # Ensure same patients order
   tmp = dfs_same_patients_same_order(expr_df = df, sample_feat_df = sample_feat_df, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
   df = tmp[["expression_data"]]
@@ -194,7 +195,7 @@ Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, m
     # geom_text(data = label(tree_labels), aes(x=x, y=y, label=label, colour = feat, hjust=0), size=1) +
     coord_flip() +
     scale_y_reverse(expand=c(0.2, 0)) +
-    scale_colour_brewer(palette = "Dark2", name = feat_column) + 
+    scale_colour_brewer(palette = palette_colors, name = feat_column) + 
     theme_dendro()
 }
 
