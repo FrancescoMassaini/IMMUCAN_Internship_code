@@ -199,7 +199,50 @@ Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, m
     theme_dendro()
 }
 
+# Plots - Violin plot
+Wrapped_violin_plot_by_clinical_feature <- function(df_long, metadata_df, metadata_var, facet_wrap_var){
+  metadata_df = rownames_to_column(metadata_df, var = "Sample")
+  tmp_clinical = metadata_df[, c("Sample", metadata_var)]
+  colnames(tmp_clinical) = c("Sample", "clin")
+  merged <- left_join(df_long, tmp_clinical, by = "Sample")
+  
+  facet_formula <- as.formula(paste("~", facet_wrap_var))
+  
+  p <- ggplot(merged, aes(x = clin, y = Value, fill = clin)) +
+    geom_violin(trim = FALSE) +
+    geom_jitter(width = 0.1, alpha = 0.2, size = 1.5, color = "black") +
+    labs(title = paste("Violin plot of", clin_var), y = "IC Level", x = clin_var, fill = clin_var) +
+    facet_wrap(facet_formula) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(p)
+}
 
+# Plots - Only significant violin plot
+significant_violin_plot = function(df_long, metadata_df, metadata_var, p_threshold = 0.05, main_title){
+  metadata_df = rownames_to_column(metadata_df, var = "Sample")
+  tmp_clinical = metadata_df[, c("Sample", metadata_var), drop = FALSE]
+  colnames(tmp_clinical) = c("Sample", "clin")
+  merged <- left_join(df_long, tmp_clinical, by = "Sample")
+  
+  test_result <- aov(Value ~ clin, data = merged)
+  summary_test_result <- summary(test_result)
+  p_value = summary_test_result[[1]]$'Pr(>F)'[1]
+  
+  if (!is.na(p_value) && p_value < p_threshold) {  # Check p-value
+    p <- ggplot(merged, aes(x = clin, y = Value, fill = clin)) +
+      geom_violin(trim = FALSE) +
+      geom_jitter(width = 0.2, alpha = 0.5, size = 1.5, color = "black") +
+      labs(title = paste(main_title, "p value: ", round(p_value, digits = 2)), y = "IC Level", x = clin_var, fill = clin_var) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    print(p)
+  }
+  else{
+    cat("No significant difference for: ", metadata_var, "p value:", p_value ,"\n")
+  }
+}
+  
 # Correlation
 cors <- function(df, cor_type) {
   M <- Hmisc::rcorr(as.matrix(df), type = cor_type)

@@ -270,57 +270,25 @@ long_metasample <- as.data.frame(t(metasample_df)) %>%
   tibble::rownames_to_column("Sample") %>%
   pivot_longer(-Sample, names_to = "IC", values_to = "Value")
 
-clinical = rownames_to_column(clinical, var = "Sample")
-
-# Join clinical data with the long format data
-combined_data <- as.data.frame(left_join(long_metasample, clinical, by = "Sample"))
 
 # Generate violin plots for each IC for each clinical variable
-clinical_vars = colnames(clinical)[-1]  # List of clinical variables
-ICs = unique(combined_data$IC)
+clinical_vars = colnames(clinical)  # List of clinical variables
+ICs = unique(long_metasample$IC)
 
 # Aggregate violin plot for each clinical variable
 for (clin_var in clinical_vars) {
-  tmp_clinical = clinical[, c("Sample", clin_var)]
-  colnames(tmp_clinical) = c("Sample", "clin")
-  merged <- left_join(long_metasample, tmp_clinical, by = "Sample")
-  
-  p <- ggplot(merged, aes(x = clin, y = Value, fill = clin)) +
-        geom_violin(trim = FALSE) +
-        geom_jitter(width = 0.1, alpha = 0.2, size = 1.5, color = "black") +
-        labs(title = paste("Violin plot of", clin_var), y = "IC Level", x = clin_var, fill = clin_var) +
-        facet_wrap(~IC) +
-        theme_minimal() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  print(p)
+  Wrapped_violin_plot_by_clincal_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
 }
 
 # Specific significant violin plot
-p_threshold = 0.05
-
 for (clin_var in clinical_vars) {
   for (IC_value in ICs){
-    df = combined_data %>%
+    df = long_metasample %>%
       dplyr::filter(IC == IC_value) %>%
-      dplyr::select(Value, all_of(clin_var))
-    colnames(df) = c("Value", "clin")
+      dplyr::select(Sample, IC, Value)
     
-    test_result <- aov(Value ~ clin, data = df)
-    summary_test_result <- summary(test_result)
-    p_value = summary_test_result[[1]]$'Pr(>F)'[1]
-    
-    if (!is.na(p_value) && p_value < p_threshold) {  # Check p-value
-      p <- ggplot(df, aes(x = clin, y = Value, fill = clin)) +
-            geom_violin(trim = FALSE) +
-            geom_jitter(width = 0.2, alpha = 0.5, size = 1.5, color = "black") +
-            labs(title = paste("Significant Violin plot of", clin_var, "for", IC_value), y = "IC Level", x = clin_var, fill = clin_var) +
-            theme_minimal() +
-            theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      print(p)
-    }
-  }
+   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+   }
 }
-
-
 
 ```
