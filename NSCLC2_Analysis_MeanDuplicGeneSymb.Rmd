@@ -120,7 +120,7 @@ NOTE: Expression df must be genes as rows and patients as column. Clinical df mu
 ```{r, fig.width=10, fig.height=10, Heatmap}
 # Load clinical data 
 clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
-  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score) %>%
+  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score, side_localization, gender) %>%
   column_to_rownames(var = "immucan_id") 
 
 # Adapt rownames of TPM to clinical ones
@@ -217,7 +217,7 @@ metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NS
 
 # Load clinical data 
 clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
-  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score) %>%
+  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score, side_localization, gender) %>%
   column_to_rownames(var = "immucan_id") 
 
 # Ensure the starting dfs have the same order
@@ -241,21 +241,17 @@ pheatmap(metasample_df, main = "",
          border = NA)
 
 
-# Order most important IC and use the same order for clinical samples
-chosen_IC = "IC4"
-order <- order(metasample_df[chosen_IC, ], decreasing = TRUE)
-metasample_df <- metasample_df[, order, drop = FALSE]
-clinical <- clinical[order, , drop = FALSE]
-metasample_df <- metasample_df[c(chosen_IC, setdiff(rownames(metasample_df), chosen_IC)), ]
-identical(colnames(metasample_df), rownames(clinical))
+# Select most important ICs 
+chosen_IC = c("IC1", "IC8", "IC14", "IC4", "IC13", "IC16", "IC3")
+metasample_df_selected <- metasample_df[chosen_IC, , drop = FALSE]
 
 
 # Plot final SAMPLE heatmap
-pheatmap(metasample_df, main = "",
+pheatmap(metasample_df_selected, main = "",
          annotation_col = clinical,
          color = heatmap_colors,
-         cluster_cols = FALSE,
-         cluster_rows = FALSE,
+         cluster_cols = TRUE,
+         cluster_rows = TRUE,
          show_colnames = T, show_rownames = T,
          fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
          border = NA)
@@ -273,7 +269,7 @@ ICs = unique(long_metasample$IC)
 
 # Aggregate violin plot for each clinical variable
 for (clin_var in clinical_vars) {
-  Wrapped_violin_plot_by_clincal_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
+  Wrapped_violin_plot_by_clinical_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
 }
 
 # Specific significant violin plot
@@ -308,7 +304,7 @@ NOTE: Expression df must be genes as rows and patients as column. Clinical df mu
 ```{r, fig.width=10, fig.height=10, Heatmap}
 # Load clinical data 
 clinical = read.csv("../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv") %>%
-  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score) %>%
+  dplyr::select(immucan_id, stage, death, neo_adjuvant_treatment, adjuvant_treatment, simple_histology, long_survivors, TIL_score, gender, simple_histology) %>%
   column_to_rownames(var = "immucan_id") 
 
 # Adapt rownames of TPM to clinical ones
@@ -330,7 +326,7 @@ Compute_Samples_Heatmap(TPM_formatted_for_clinical_high_variance,  sample_feat_d
 # Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
 TPM_forBIODICA = TPM_formatted_for_clinical_high_variance %>%
   rownames_to_column(var = "genes")
-write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_highly_variable_genes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+# write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_highly_variable_genes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 ```
 ## Sample Dendrogram
 ```{r}
@@ -468,12 +464,6 @@ for (clin_var in clinical_vars) {
    }
 }
 ```
-
-
-
-
-
-
 
 DECONVOLUTION
  

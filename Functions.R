@@ -4,6 +4,7 @@ library(dendextend)
 
 dfs_same_patients_same_order <- function(expr_df, sample_feat_df, expr_patients_on_rows = FALSE, clinical_patients_on_rows = TRUE) {
   # Initial transpose of the expression dataframe
+  
   df_transposed <- as.data.frame(t(expr_df))
 
   # Merging with patient metadata
@@ -152,6 +153,7 @@ compute_distribution <- function(data, plot_title, xlab, ylab = "Density", use_l
 }
 
 # Plots - Heatmap
+## patients need to start on columns
 Compute_Samples_Heatmap <- function(df, sample_feat_df = NULL, main_title = NULL){
   # Ensure same patients order
   tmp = dfs_same_patients_same_order(expr_df = df, sample_feat_df = sample_feat_df, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
@@ -243,6 +245,45 @@ significant_violin_plot = function(df_long, metadata_df, metadata_var, p_thresho
   }
 }
   
+# Plots - Correlation plot from two different dfs
+## dfs must have the same rownames and features on columns 
+create_correlation_plot <- function(data1, data2, correlation_type = "pearson", r_threshold = 0.7, p_threshold = 0.05) {
+  # Merge the two datasets
+  merged_data = cbind(data1, data2)
+  
+  # Compute correlation matrix using Hmisc package
+  cor_matrix = Hmisc::rcorr(as.matrix(merged_data), type = correlation_type)
+  
+  # Extract correlation coefficients and p-values
+  correlation_data = cor_matrix$r %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "variable1") %>%
+    pivot_longer(cols = -variable1, names_to = "variable2", values_to = "correlation") %>%
+    filter(variable1 %in% colnames(data1) & variable2 %in% colnames(data2))
+  
+  p_value_data = cor_matrix$P %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "variable1") %>%
+    pivot_longer(cols = -variable1, names_to = "variable2", values_to = "p_value") %>%
+    filter(variable1 %in% colnames(data1) & variable2 %in% colnames(data2))
+  
+  # Join the correlation and p-value data
+  correlation_analysis = left_join(correlation_data, p_value_data, by = c("variable1", "variable2")) %>%
+    filter((correlation < -r_threshold | correlation > r_threshold) & !is.na(p_value) & p_value <= p_threshold)
+  
+  # Plot the results using ggplot2
+  plot = ggplot(data = correlation_analysis, aes(x = variable1, y = variable2, fill = correlation, label = round(correlation, digits = 2))) +
+    geom_tile() +
+    geom_text(color = "black", size = 3, vjust = 1.5) +
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  return(plot)
+}
+
+
+
 # Correlation
 cors <- function(df, cor_type) {
   M <- Hmisc::rcorr(as.matrix(df), type = cor_type)
