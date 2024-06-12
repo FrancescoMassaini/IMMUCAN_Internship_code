@@ -66,7 +66,8 @@ TPM <- TPM[,BC2_samples]
 
 # Deconvolution methods already take into account low expressed and low variance genes so we can directly save TPM
 BC2_forDeconv = TPM
-# write.csv(BC2_forDeconv, file = "../IMMUCAN_data/BC2/02_TPM/BC2_fromAndreaRdata_filtered_Samples.csv")
+BC2_forDeconv = EnsemblID_to_GeneSymbol(raw_counts_file = BC2_forDeconv, aggregation_method = "mean")
+write.csv(BC2_forDeconv, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/BC2_fromAndreaRdata_filtered_Samples.csv")
 ```
 
 # 03 Analizing TPM
