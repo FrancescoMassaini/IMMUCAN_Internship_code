@@ -1,0 +1,1458 @@
+
+---
+title: "BC2"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Imports
+```{r Imports}
+suppressMessages(library(dplyr)) 
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(org.Hs.eg.db)) # Homo sapiens db
+suppressMessages(library(stringr))
+suppressMessages(library(RColorBrewer)) # for plot
+suppressMessages(library(pheatmap)) # for heatmaps
+suppressMessages(library(ADImpute)) # This package provides functions to compute TPM
+suppressMessages(library(ggplot2))
+suppressMessages(library(FactoMineR))
+suppressMessages(library(factoextra))
+suppressMessages(library(survival))
+suppressMessages(library(ranger))
+suppressMessages(library(ggfortify))
+suppressMessages(library(rlang))
+suppressMessages(library(purrr))
+suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
+suppressMessages(library(readxl))
+```
+
+# Functions
+```{r Functions}
+source("./Functions.R")
+```
+
+# Path and folders
+```{r Data loading}
+output_folder_TPM <- "../IMMUCAN_data/BC2/02_TPM/"
+output_folder_deconvolution <- "../IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/"
+output_folder_CellTFusion <- "../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/" 
+```
+
+# 01 We don't need to process raw BC2 data cause we got the final TPM from Andrea
+```{r Processing Raw Counts}
+## ADD the comparison between raw counts processing with ADImpute and Andrea results
+```
+
+# 02 BC2 Filtering Samples and saving file
+```{r Filtering samples}
+TPM = load("../IMMUCAN_data/BC2/02_TPM/BC2_estimated_TPM_fromAndrea.RData")
+colSums(gexp_tpm) 
+
+TPM = remove_gene_version(gexp_tpm)
+
+# Filtering samples with the list samples_list
+samples_list = read_xlsx("../IMMUCAN_data/BC2/01_Reference_files_from_Andrea_BC2_TNBC/List_samples_data_type/rna_samples_bc2_custom_cohort.xlsx")
+cat("Numb of rows in Andrea expr list ", nrow(samples_list), "\nNumber of unique samples", length(unique(samples_list$sample)), "\n Duplicated sample:", samples_list[which(duplicated(samples_list[,"sample"])),"sample"][[1]]) 
+
+BC2_samples <- intersect(colnames(TPM), samples_list$sample)
+cat("Sample(s) in RData not present in sample_list (duplicated samples in sample_list are not shown):", setdiff(samples_list$sample, BC2_samples))
+TPM <- TPM[,BC2_samples] 
+
+# Deconvolution methods already take into account low expressed and low variance genes so we can directly save TPM
+BC2_forDeconv = TPM
+BC2_forDeconv = EnsemblID_to_GeneSymbol(raw_counts_file = BC2_forDeconv, aggregation_method = "mean")
+write.csv(BC2_forDeconv, file = "/home/francesco.massaini/Desktop/IMMUCAN_data/BC2/02_TPM/BC2_fromAndreaRdata_filtered_Samples.csv")
+```
+
+# 03 Analizing TPM
+```{r Distribution}
+# Let's see the initial distribution
+compute_distribution(data = TPM, plot_title = "Distribution of TPM", xlab = "log2(TPM+1)", use_log = T) # log2(x+1)
+
+# Note: since counts are not available but we start directly from TPM we can't filter low expressed genes based on count values. Let's filter on TPM values 
+TPM_filtered_forClustering = TPM %>%
+  filter_low_expr_genes(., avg_expr_threshold = 1, zero_count_percent_threshold = 0.9)
+# Remove low variance genes too
+TPM_filtered_forClustering <- TPM_filtered_forClustering %>% # not yet log2 transformed
+  filter_low_variance_genes(., quantile_threshold = 0.2)
+
+cat("Number of final genes:", nrow(TPM_filtered_forClustering), "\n Number of starting genes:",  nrow(TPM), "\n Difference:", nrow(TPM)-nrow(TPM_filtered_forClustering))
+
+# Distribution after filtering
+compute_distribution(data = TPM_filtered_forClustering, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
+# Finally convert TPM to log2(TPM+1)
+TPM_filtered_forClustering = log2(TPM_filtered_forClustering+1)
+
+```
+
+# Analizing filtered TPM 
+## Sample Heatmap
+NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r}
+# Load clinical data and clinical samples list 
+clinical_patients_list = read_xlsx("../IMMUCAN_data/BC2/01_Reference_files_from_Andrea_BC2_TNBC/BC2_pCR_should_be_ok.xlsx", col_names = FALSE)
+colnames(clinical_patients_list) = c("Patients", "Notes")
+
+# Filtering with Andrea list, we end up with only ~30 patients when intersecated with clinical and less than 25 when intersecated with bulk data. Let's keep patients present in our bulk dataset 
+# length(intersect(clinical_patients_list$Patients, str_remove_all(colnames(TPM_filtered_forClustering), pattern = "-FIXT-0[0-9]"))) 
+
+# clinical_all_columns = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240602.tsv", sep = "\t") %>%
+#   dplyr::filter(immucan_patient_id %in% clinical_patients_list$Patients) %>%
+#   dplyr::select(where(~ sum(!is.na(.)) >= 20))
+# cat("Numb of patients:", length(unique(clinical_all_columns$immucan_patient_id)) , "\nNumb of samples: ", nrow(clinical_all_columns),"\n Not present patients:", setdiff(clinical_patients_list$Patients,unique(clinical_all_columns$immucan_patient_id)))
+
+clinical_all_columns = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240602.tsv", sep = "\t") %>%
+  dplyr::filter(immucan_sample_id %in% colnames(TPM_filtered_forClustering)) %>%
+  dplyr::select(where(~ sum(!is.na(.)) >= 20))
+cat("Numb of samples:", length(unique(clinical_all_columns$immucan_sample_id)) , "\n Not present samples:", setdiff(colnames(TPM_filtered_forClustering), clinical_all_columns$immucan_sample_id))
+
+relevant_clinical_columns = c("immucan_patient_id",
+      "immucan_sample_id",
+      "surgery_days_after_diag",
+      "sampling_days_after_diag",
+      "lymphocyte_infiltration",
+      "PCR",
+      # "medical_review_end_point", # full of "pCR (e.g. surgery)". I'm not sure what is the difference with column PCR, perhaps on different time point?
+      "residual_cancer_burden",
+      "residual_disease",
+      # "treatment_setting", # Empty column on the same samples of RNAseq
+      # "sex", # obviously not so interesting for BC
+      # "HER2_status", # all negative
+      # "ER_status", # all negative
+      # "PR_status", # only 1 patient positive
+      "KI67_status",
+      "laterality",
+      # "disease_evolution", # only three 1 values
+      "stage",
+      "N_stage",
+      # "M_stage", # only cM0 or unknown 
+      "T_stage")
+
+clinical_surv = clinical_all_columns[, c("immucan_patient_id",
+      "immucan_sample_id",
+      "surgery_days_after_diag",
+      "sampling_days_after_diag",
+      "lymphocyte_infiltration",
+      "PCR")]
+
+# Filter clinical with only relevant columns and mutate absent ("") values to NA
+clinical = clinical_all_columns[, relevant_clinical_columns] %>%
+  dplyr::select(-all_of(c("surgery_days_after_diag","sampling_days_after_diag", "immucan_patient_id"))) %>% # remove even immucan_patient_id for better further rapresentations
+  mutate(PCR = if_else(PCR == "", NA, PCR)) %>%
+  mutate(stage = if_else(stage == "", NA, stage)) %>%
+  mutate(lymphocyte_infiltration = if_else(lymphocyte_infiltration == "", NA, lymphocyte_infiltration)) %>%
+  mutate(lymphocyte_infiltration = if_else(lymphocyte_infiltration == "Not Applicable", "Not applicable", lymphocyte_infiltration)) %>%
+  mutate(residual_cancer_burden = if_else(residual_cancer_burden == "", NA, residual_cancer_burden)) %>%
+  mutate(residual_disease = if_else(PCR == "", NA, residual_disease)) %>%
+  column_to_rownames(var = "immucan_sample_id")
+
+common_samples <- intersect(rownames(clinical), colnames(TPM_filtered_forClustering))
+TPM_filtered_forClustering <- TPM_filtered_forClustering %>% dplyr::select(all_of(common_samples))
+
+clinical <- clinical[rownames(clinical) %in% common_samples, ]
+```
+
+```{r, fig.width=10, fig.height=10, Heatmap}
+# Heatmap on TPM, groups and outliers 
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_heatmap.pdf"), width = 16, height = 16)
+Compute_Samples_Heatmap(TPM_filtered_forClustering,  sample_feat_df = clinical, main_title = "Heatmap samples vs samples - Euclidian distance matrix on TPM data") 
+# dev.off()
+
+```
+
+## Sample Dendrogram
+```{r}
+# Sample dendrograms, colored by relevant clinical feature
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"), width = 16, height = 10)
+for (feat in colnames(clinical)){
+  tree = Compute_Samples_dendrogram(TPM_filtered_forClustering,  sample_feat_df = clinical, feat_column = feat, main_title = "Sample dendrogram - Euclidian distance matrix on TPM data", palette_colors = "Paired")
+  print(tree)
+}
+# dev.off()
+```
+## PCA biplot
+```{r}
+# PCA biplot on TPM
+
+# Ensure to merge in the same order TPM and clinical values and traspose 
+tmp = dfs_same_patients_same_order(TPM_filtered_forClustering, clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE) # expr_patients_on_rows = TRUE Patients on ROWS
+TPM_filtered_forClustering = tmp[["expression_data"]]
+clinical = tmp[["clinical_data"]] %>%
+  replace(is.na(.), "NA") # Replace NA with missing to show NA values on fviz_pca_biplot
+
+# Compute PCA
+pca_result <- FactoMineR::PCA(TPM_filtered_forClustering, scale.unit = TRUE, graph = FALSE)  
+fviz_eig(pca_result) # Scree plot: explained variance by PC
+
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
+for (feat in colnames(clinical)){
+  p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                              habillage = as.factor(clinical[,feat]),
+                              addEllipses = T, ellipse.level=0.95, palette = "Dark2", 
+                              legend.title = feat,
+                              ggtheme = theme_minimal())
+  print(p)
+}
+# repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+# dev.off()
+```
+## Umap 
+```{r}
+# UMAP on TPM
+clinical <- clinical %>% 
+  mutate(across(everything(), ~ifelse(. == "NA", NA, .))) # Restore NA 
+
+umap_result <- as.data.frame(umap(TPM_filtered_forClustering, n_neighbors = 8, min_dist = 0.1, metric = "euclidean")) # t() it's not necessary beacuse TPM has been already transposed
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+
+TPM_filtered_forClustering = as.data.frame(t(TPM_filtered_forClustering))
+```
+
+## IDA BIODICA Analysis
+## Conversion to GENE SYMBOLS for BIODICA 
+```{r}
+TPM_gene_symbols = TPM_filtered_forClustering %>%
+  EnsemblID_to_GeneSymbol(., aggregation_method = "mean") # Duplicated gene symbols are aggregated by average
+
+# Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
+TPM_forBIODICA = TPM_gene_symbols %>%
+  rownames_to_column(var = "genes")
+# write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_BC2_Biodica_meanDuplGenes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+## IDA Analysis
+```{r IDA}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_BC2_Biodica_meanDuplGenes_ICA/TPM_BC2_Biodica_meanDuplGenes_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_BC2_Biodica_meanDuplGenes_ICA/TPM_BC2_Biodica_meanDuplGenes_ica_S.xls", header = TRUE, row.names = 1)
+
+# Ensure the starting dfs have the same order
+tmp = dfs_same_patients_same_order(expr_df = as.data.frame(t(metasample_df)), sample_feat_df = clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
+metasample_df = tmp[["expression_data"]]
+clinical = tmp[["clinical_data"]]
+
+# Heatmap configuration
+heatmap_colors <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+# Show results
+metasample_df <- t(as.matrix(metasample_df))
+identical(colnames(metasample_df), rownames(clinical))
+
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Order most important IC and use the same order for clinical samples
+chosen_IC = "IC2"
+order <- order(metasample_df[chosen_IC, ], decreasing = TRUE)
+metasample_df <- metasample_df[, order, drop = FALSE]
+clinical <- clinical[order, , drop = FALSE]
+metasample_df <- metasample_df[c(chosen_IC, setdiff(rownames(metasample_df), chosen_IC)), ]
+identical(colnames(metasample_df), rownames(clinical))
+
+
+# Plot final SAMPLE heatmap
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = FALSE, # No cols clustering
+         cluster_rows = FALSE, # No rows clustering
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Prepare the data
+# Convert 'metasample_df' into a long format
+long_metasample <- as.data.frame(t(metasample_df)) %>% 
+  tibble::rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "IC", values_to = "Value")
+
+
+# Generate violin plots for each IC for each clinical variable
+clinical_vars = colnames(clinical)  # List of clinical variables
+ICs = unique(long_metasample$IC)
+
+# Aggregate violin plot for each clinical variable
+for (clin_var in clinical_vars) {
+  Wrapped_violin_plot_by_clinical_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
+}
+
+# Specific significant violin plot
+for (clin_var in clinical_vars) {
+  for (IC_value in ICs){
+    df = long_metasample %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Sample, IC, Value)
+    
+   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+   }
+}
+
+
+
+
+```
+
+
+# Working only on top varible genes
+```{r }
+TPM_filtered_forClustering = TPM %>%
+  filter_low_expr_genes(., avg_expr_threshold = 1, zero_count_percent_threshold = 0.9)
+
+TPM_high_variance_genes <- TPM_filtered_forClustering %>% # not yet log2 transformed
+  filter_low_variance_genes(., quantile_threshold = 0.75)
+
+cat("Number of final genes:", nrow(TPM_high_variance_genes), "\n Number of starting genes:",  nrow(TPM), "\n Difference:", nrow(TPM)-nrow(TPM_filtered_forClustering))
+
+# Distribution after filtering
+compute_distribution(data = TPM_high_variance_genes, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
+# Finally convert TPM to log2(TPM+1)
+TPM_filtered_forClustering_high_variance = log2(TPM_high_variance_genes+1)
+```
+
+## Sample Heatmap
+NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns
+```{r, fig.width=10, fig.height=10, Heatmap}
+Compute_Samples_Heatmap(TPM_filtered_forClustering_high_variance,  sample_feat_df = clinical, main_title = "Heatmap samples vs samples - Euclidian distance matrix on TPM data") 
+```
+
+## Sample Dendrogram
+```{r}
+# Sample dendrograms, colored by relevant clinical feature
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_dendrogram.pdf"), width = 16, height = 10)
+for (feat in colnames(clinical)){
+  tree = Compute_Samples_dendrogram(TPM_filtered_forClustering_high_variance,  sample_feat_df = clinical, feat_column = feat, main_title = "Sample dendrogram - Euclidian distance matrix on TPM data", palette_colors = "Paired")
+  print(tree)
+}
+# dev.off()
+```
+
+## PCA biplot
+```{r}
+# PCA biplot on TPM
+
+# Ensure to merge in the same order TPM and clinical values and traspose 
+tmp = dfs_same_patients_same_order(TPM_filtered_forClustering_high_variance, clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE) # expr_patients_on_rows = TRUE Patients on ROWS
+TPM_filtered_forClustering_high_variance = tmp[["expression_data"]]
+clinical = tmp[["clinical_data"]] %>%
+  replace(is.na(.), "NA") # Replace NA with missing to show NA values on fviz_pca_biplot
+
+# Compute PCA
+pca_result <- FactoMineR::PCA(TPM_filtered_forClustering_high_variance, scale.unit = TRUE, graph = FALSE)  
+fviz_eig(pca_result) # Scree plot: explained variance by PC
+
+# pdf(paste0(output_folder_TPM_outlier, "TPM_samples_PCA.pdf"))
+for (feat in colnames(clinical)){
+  p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                              habillage = as.factor(clinical[,feat]),
+                              addEllipses = T, ellipse.level=0.95, palette = "Dark2", 
+                              legend.title = feat,
+                              ggtheme = theme_minimal())
+  print(p)
+}
+# repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+# dev.off()
+```
+## Umap 
+```{r}
+# UMAP on TPM
+clinical <- clinical %>% 
+  mutate(across(everything(), ~ifelse(. == "NA", NA, .))) # Restore NA 
+
+umap_result <- as.data.frame(umap(TPM_filtered_forClustering_high_variance, n_neighbors = 8, min_dist = 0.1, metric = "euclidean")) # t() it's not necessary beacuse TPM has been already transposed
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+
+TPM_filtered_forClustering_high_variance = as.data.frame(t(TPM_filtered_forClustering_high_variance))
+```
+## IDA BIODICA Analysis
+## Conversion to GENE SYMBOLS for BIODICA 
+```{r}
+TPM_gene_symbols_high_variance = TPM_filtered_forClustering_high_variance %>%
+  EnsemblID_to_GeneSymbol(., aggregation_method = "mean") # Duplicated gene symbols are aggregated by average
+
+# Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
+TPM_forBIODICA = TPM_gene_symbols_high_variance %>%
+  rownames_to_column(var = "genes")
+write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_BC2_Biodica_meanDuplGenes_highly_variable_genes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+
+## IDA Analysis
+```{r IDA}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_BC2_Biodica_meanDuplGenes_highly_variable_genes_ICA/TPM_BC2_Biodica_meanDuplGenes_highly_variable_genes_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_BC2_Biodica_meanDuplGenes_highly_variable_genes_ICA/TPM_BC2_Biodica_meanDuplGenes_highly_variable_genes_ica_S.xls", header = TRUE, row.names = 1)
+
+# Ensure the starting dfs have the same order
+tmp = dfs_same_patients_same_order(expr_df = as.data.frame(t(metasample_df)), sample_feat_df = clinical, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
+metasample_df = tmp[["expression_data"]]
+clinical = tmp[["clinical_data"]]
+
+# Heatmap configuration
+heatmap_colors <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+# Show results
+metasample_df <- t(as.matrix(metasample_df))
+identical(colnames(metasample_df), rownames(clinical))
+
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Select most important ICs 
+chosen_IC = c("IC1", "IC2", "IC4", "IC7", "IC19", "IC10", "IC18")
+metasample_df_selected <- metasample_df[chosen_IC, , drop = FALSE]
+
+
+# Plot final SAMPLE heatmap
+pheatmap(metasample_df_selected, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         cluster_rows = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Prepare the data
+# Convert 'metasample_df' into a long format
+long_metasample <- as.data.frame(t(metasample_df_selected)) %>% 
+  tibble::rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "IC", values_to = "Value")
+
+
+# Generate violin plots for each IC for each clinical variable
+clinical_vars = colnames(clinical)  # List of clinical variables
+ICs = unique(long_metasample$IC)
+
+# Aggregate violin plot for each clinical variable
+for (clin_var in clinical_vars) {
+  Wrapped_violin_plot_by_clinical_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
+}
+
+# Specific significant violin plot
+for (clin_var in clinical_vars) {
+  for (IC_value in ICs){
+    df = long_metasample %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Sample, IC, Value)
+    
+   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+   }
+}
+```
+
+# Fisher's tests on clinical varibles
+```{r, Clinical variables}
+clinical_all_columns = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240602.tsv", sep = "\t") %>%
+  dplyr::filter(immucan_sample_id %in% colnames(TPM_filtered_forClustering)) %>%
+  dplyr::select(where(~ sum(!is.na(.)) >= 20))
+cat("Numb of samples:", length(unique(clinical_all_columns$immucan_sample_id)) , "\n Not present samples:", setdiff(colnames(TPM_filtered_forClustering), clinical_all_columns$immucan_sample_id))
+
+relevant_clinical_columns = c("immucan_patient_id",
+      "immucan_sample_id",
+      "surgery_days_after_diag",
+      "sampling_days_after_diag",
+      "lymphocyte_infiltration",
+      "PCR",
+      # "medical_review_end_point", # full of "pCR (e.g. surgery)". I'm not sure what is the difference with column PCR, perhaps on different time point?
+      # "medical_review_days_after_diag",
+      "residual_cancer_burden",
+      "residual_disease",
+      # "treatment_setting", # Empty column on the same samples of RNAseq  
+      # "sex", # obviously not so interesting for BC
+      # "HER2_status", # all negative
+      # "ER_status", # all negative
+      # "PR_status", # only 1 patient positive
+      "KI67_status",
+      "laterality",
+      # "disease_evolution", # only three 1 values
+      "stage",
+      "N_stage",
+      # "M_stage", # only cM0 or unknown 
+      "T_stage")
+
+clinical_surv = clinical_all_columns[, c("immucan_patient_id",
+      "immucan_sample_id",
+      "surgery_days_after_diag",
+      "sampling_days_after_diag",
+      "lymphocyte_infiltration",
+      "PCR")]
+
+# Filter clinical with only relevant columns and mutate absent ("") values to NA
+clinical = clinical_all_columns[, relevant_clinical_columns] %>%
+  dplyr::select(-all_of(c("surgery_days_after_diag","sampling_days_after_diag", "immucan_patient_id"))) %>% # remove even immucan_patient_id for better further rapresentations
+  mutate(PCR = if_else(PCR == "", NA, PCR)) %>%
+  mutate(stage = if_else(stage == "", NA, stage)) %>%
+  mutate(lymphocyte_infiltration = if_else(lymphocyte_infiltration == "", NA, lymphocyte_infiltration)) %>%
+  mutate(lymphocyte_infiltration = if_else(lymphocyte_infiltration == "Not Applicable", "Not applicable", lymphocyte_infiltration)) %>%
+  mutate(residual_cancer_burden = if_else(residual_cancer_burden == "", NA, residual_cancer_burden)) %>%
+  mutate(residual_disease = if_else(PCR == "", NA, residual_disease)) %>%
+  column_to_rownames(var = "immucan_sample_id")
+
+
+
+fixed_clinical_feature = "PCR"
+clinical_features = colnames(clinical)[colnames(clinical) != fixed_clinical_feature]
+
+for (feat in clinical_features){
+  selected = dplyr::select(clinical, fixed_clinical_feature , feat)
+  contingency_table = table(selected)
+  chi_result <- chisq.test(as.matrix(contingency_table))
+    if (chi_result$p.value < 0.05) {
+      print(paste(feat, chi_result$p.value))
+      print(contingency_table)
+      mosaicplot(contingency_table + 0.1,
+                 main = "Mosaic plot",
+                 sub = paste("P-value:", format(chi_result$p.value, digits = 2)),
+                 color = TRUE
+                )
+    } else{
+    cat(feat, "No Significance\n")
+    }
+}
+
+specific_contincency = table(dplyr::select(clinical, PCR , lymphocyte_infiltration))
+mosaicplot(specific_contincency + 0.1,
+                 main = "Mosaic plot",
+                 sub = paste("P-value:", format(chi_result$p.value, digits = 2)),
+                 color = TRUE
+                )
+```
+
+
+
+DECONVOLUTION
+
+# 05 Loading Deconvolution Data
+```{r Loading Deconvolution}
+deconv <- read.table("../IMMUCAN_data/BC2/03_Deconvolution/all_deconvolutions_BC2_filtered_samples.txt", header = TRUE,  sep = '	', row.names = 1)
+rownames(deconv) = str_replace_all(string = rownames(deconv), pattern = "\\.", replacement = "-")
+```
+
+# 06 Preliminary Deconvolution Analisys ON DECONVOLUTION DATA
+```{r Deconvolution}
+# Sample clustering
+
+Compute_Samples_dendrogram(t(deconv))
+Compute_Samples_Heatmap(t(deconv)) # double t() (here and in the function) to take into account rows
+
+# PCA
+pca_result <- PCA(deconv, scale.unit = TRUE, graph = FALSE) # t(deconv) because PCA takes rows 
+fviz_eig(pca_result)
+
+factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var") # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+
+```
+# 07 Clinical Data
+```{r}
+clinical = read.delim("../IMMUCAN_data/BC2/01_Clinical_Data/BC2_clinical_export_20240403.tsv", sep = "\t")
+relevant_clinical_feature = c("sex", "PCR", "stage", "M_stage", "N_stage", "T_stage")
+```
+
+# 08 mIF data loading and sample filtering
+```{r}
+# Load data
+IF1 = read.delim("C:/Users/Francesco/Desktop/IMMUCAN_data/BC2/IF1/IMMU-BC2-0118-FIXT-01-IF1-01_#_cells_properties_#_ca1f580385e6326c85cc2a31447cc380.tsv", sep = "\t") 
+IF2 = read.delim("C:/Users/Francesco/Desktop/IMMUCAN_data/BC2/IF1/IMMU-BC2-0118-FIXT-01-IF1-01_#_cells_properties2_#_17ba248fc294d4f08c29e9ec43370c96.tsv", sep = "\t")  
+
+```
+
+
+# Benchmark of deconvolution results vs mIF data
+```{r Correlation Deconv vs mIF}
+# loading mIF FRACTION files and using the same patient names convention.  
+IF1 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", header = 1, row.names = 1)
+rownames(IF1) <- rownames(IF1) %>% 
+  str_remove_all("-IF1-01")
+
+IF2 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_fraction.csv", header = 1, row.names = 1)
+rownames(IF2) <- rownames(IF2) %>% 
+  str_remove_all("-IF2-01")
+
+IF3 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_fraction.csv", header = 1, row.names = 1)
+rownames(IF3) <- rownames(IF3) %>% 
+  str_remove_all("-IF3-01")
+
+# Keeping only common patients and saving the file
+common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3))) # Redcue beacuse to apply intersect on more sets, you should reduce the common intersection progressively
+IFs <- cbind(IF1[common_patients,], IF2[common_patients,], IF3[common_patients,])
+
+# write.csv(IFs, "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv")
+
+
+# Computing correlation between Deconvolution features and imaging
+corr_method <- "spearman"
+imaging <- "mIFs"
+Deconv <- "Deconv"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs_all_", imaging, sep = "_"),
+                        output_folder = output_folder_deconvolution,
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = Deconv, 
+                        png_width = 20,
+                        png_height = 20,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
+
+pdf(file = paste0(output_folder_deconvolution,"scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+for (i in 1:nrow(corr_results[[1]])){
+  if (i %% 2 == 1) {
+    par(mfrow=c(2,1))
+  }
+  
+  x = dplyr::select(corr_results[[6]], corr_results[[1]][i,"Feature1"]) 
+  y = dplyr::select(corr_results[[6]], corr_results[[1]][i,"Feature2"]) 
+
+  plot(x[,1], y[,1], main = "Scatter Plot", xlab = corr_results[[1]][i,"Feature1"], ylab = corr_results[[1]][i,"Feature2"])
+
+  # Calcola il modello di regressione lineare
+  model <- lm(y[,1] ~ x[,1])
+  r = summary(model)$r.squared
+  
+  # Aggiungi la linea di regressione al plot
+  abline(model, col = "red")
+  text(x = max(x) * 0.7, y = max(y), labels = paste("R^2 =", round(r, 2)), col = "red")
+  
+  if (i == nrow(corr_results[[1]]) && i %% 2 == 1) {
+    dev.off()
+  }
+}
+dev.off()
+
+
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_deconvolution, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
+
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
+
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
+
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
+
+```
+
+# Benchmark of deconvolution results vs IMC data
+```{r Correlation Deconv vs IMC}
+# Computing correlation between Deconvolution features and imaging
+corr_method <- "spearman"
+imaging = "IMC"
+Deconv = "Deconv"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt",
+                         deconv_low_value_filter = F,
+                                    imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs", imaging, sep = "_"),
+                        output_folder = output_folder_deconvolution,
+                        save_png = F,
+                        x_label = imaging,
+                        y_label = Deconv, 
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
+
+# Scatter plot 
+pdf(file = paste0(output_folder_deconvolution, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
+
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
+
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  # mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
+
+
+```
+
+
+# Deconvolution results of BPRNACan3DProMet_M2 vs ALL clinical data 
+```{r BPRNACan3DProMet_M2}
+# loading clinical file and using the same patient names convention for IF and deconvlution results. Deleting also Tumor counts from IF data  
+clinical <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_for_R_update_2024.csv", header = 1) %>%
+  column_to_rownames(var = "immucan_id")
+  
+rownames(deconv) <- rownames(deconv) %>%
+  str_remove_all(pattern = "-FIXT-01|-RNA-01|-RNA-02||-RNA-04")
+
+# Keeping only common patients and subsetting deconv and IF 
+common_patients <- intersect(rownames(clinical), rownames(deconv))
+clinical_common <- clinical[common_patients,] %>%
+  dplyr::select(death, gender, stage, side_localization, smoking_status, neo_adjuvant_treatment, adjuvant_treatment, type_of_adj_trt, metastatic_treatment, simple_histology, simple_stage, primary_localization, long_survivors, T_stage, M_stage, N_stage, primary_tumor_size, TIL_score)
+deconv_common <- deconv[common_patients, ] # %>%
+  # dplyr::select(grep("*._BPRNACan3DProMet_M2|CBSX_LM22_Macrophages_M2", colnames(deconv)))
+
+
+merged_df_clinical <- cbind(clinical_common, deconv_common)
+merged_df_clinical[1:18] <- lapply(merged_df_clinical[1:18], factor)
+
+for (i in colnames(merged_df_clinical)[19:ncol(merged_df_clinical)]) {
+  for (j in colnames(merged_df_clinical)[1:18]) {
+    if (is.factor(merged_df_clinical[[j]]) && is.numeric(merged_df_clinical[[i]])) {
+      data_no_na <- na.omit(merged_df_clinical[, c(i, j)])
+      
+      if (length(unique(data_no_na[[j]])) > 2) {
+        # ANOVA
+        formula <- as.formula(paste(i, "~", j))
+        test_result <- aov(formula, data = data_no_na)
+        summary_result <- summary(test_result)
+        p_value <- round(summary_result[[1]]$'Pr(>F)'[1], digit = 3)
+      } else {
+        # Test t
+        formula <- as.formula(paste(i, "~", j))
+        test_result <- t.test(formula, data = data_no_na)
+        p_value <- round(test_result$p.value, digit = 3)
+      }
+      
+      # Grafico
+      plot <- ggplot(data_no_na, aes_string(x = j, y = i, fill = j)) +
+        geom_violin() +
+        labs(title = paste("Violin plot of", i, "by", j), subtitle = paste("p-value:", p_value)) +
+        theme(axis.text.x = element_text(angle = 90))
+      
+      
+      
+       if(p_value<0.08) print(plot)
+    }
+  }
+}
+
+
+clinical_common2 <- clinical[common_patients,] %>%
+  dplyr::select(death, time_to_event, age_at_registration, age_at_diagnosis, average_number_of_cigarettes, number_of_years, tumor_area_mm_square)
+merged_df_clinical2 <- cbind(clinical_common2, deconv_common)
+
+merged_df_clinical2 = mutate(merged_df_clinical2, death = ifelse(death == "Yes", 1, 0))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_Epidish = ifelse(Epidish_BPRNACan3DProMet_M2 > median(Epidish_BPRNACan3DProMet_M2, na.rm = TRUE), "H", "L"))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_DeconRNASeq = ifelse(DeconRNASeq_BPRNACan3DProMet_M2 > median(DeconRNASeq_BPRNACan3DProMet_M2, na.rm = TRUE), "H", "L"))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_CBSX_BPRNACan = ifelse(CBSX_BPRNACan3DProMet_M2 > median(CBSX_BPRNACan3DProMet_M2, na.rm = TRUE), "H", "L"))
+merged_df_clinical2 = mutate(merged_df_clinical2, M2_CBSX_LM22 = ifelse(CBSX_LM22_Macrophages_M2 > median(CBSX_LM22_Macrophages_M2, na.rm = TRUE), "H", "L"))
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_Epidish, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+if(p_value < 0.05) autoplot(km_trt_fit)
+print(p_value)
+
+
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_DeconRNASeq, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+if(p_value < 0.05) autoplot(km_trt_fit)
+print(p_value)
+
+
+
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_CBSX_BPRNACan, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+if(p_value < 0.05) autoplot(km_trt_fit)
+print(p_value)
+
+
+
+km_trt_fit <- survfit(Surv(time_to_event, death) ~ M2_CBSX_LM22, data=merged_df_clinical2)
+# Test delle differenze tra le curve di sopravvivenza
+surv_diff_result <- survdiff(Surv(time_to_event, death) ~ M2_Epidish, data = merged_df_clinical2)
+
+# Estrazione del p-value
+p_value <- 1 - pchisq(surv_diff_result$chisq, length(surv_diff_result$n) - 1)
+
+# if(p_value < 0.05) 
+autoplot(km_trt_fit)
+print(p_value)
+
+
+ggplot(merged_df_clinical2, aes(x=time_to_event, y=Epidish_BPRNACan3DProMet_M2)) +
+  geom_point() +
+  geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
+
+# long_df <- pivot_longer(merged_df_clinical, 
+#                         cols = -death,                         
+#                         names_to = "variable", 
+#                         values_to = "value")
+
+# ggplot(long_df, aes(x = variable, y = value, fill=death)) +
+#   geom_violin() +
+#   scale_y_continuous(limits = c(-0.0001, 0.0020)) + # Sostituisci ymin e ymax con i valori desiderati
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+# Loading CellTFusion data
+```{r CellTFusion Loading}
+CellTFusion <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Deconvolution_after_subgrouping.csv", header = 1, row.names = 1)
+```
+
+
+# Benchmark of CellTFusion deconvolution results vs mIF data
+```{r Correlation CellTFusion vs mIF}
+# Computing correlation between CellTFusion Deconvolution features and imaging
+corr_method <- "spearman"
+imaging = "mIFs"
+Deconv = "CellTFusion"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+output_folder_CellTFusion = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/all_vs_all/"
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/Deconvolution_after_subgrouping.csv",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_fraction.csv",
+                         imaging_pattern_to_remove = "-FIXT-01",
+                         deconv_pattern_to_remove = "",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs", imaging, sep = "_"),
+                        output_folder = output_folder_CellTFusion,
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = Deconv,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr,
+                        png_width = 20,
+                        png_height = 20
+                        )
+
+
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_CellTFusion, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
+
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
+
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
+
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
+```
+
+# Benchmark of CellTFusion deconvolution results vs IMC data
+```{r Correlation CellTFusion vs IMC}
+# Computing correlation between CellTFusion Deconvolution features and imaging
+corr_method <- "spearman"
+imaging = "IMC"
+Deconv = "CellTFusion"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IMC_CellTFusion_result/Deconvolution_after_subgrouping.csv",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = Deconv)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(Deconv, "vs", imaging, sep = "_"),
+                        output_folder = output_folder_CellTFusion,
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = Deconv,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
+
+
+# Apri il dispositivo PDF
+pdf(file = paste0(output_folder_CellTFusion, "scatterplot_", Deconv, "_vs_", imaging, ".pdf"))
+
+for (i in 1:nrow(corr_results[[1]])) {
+  # Imposta due plot per pagina
+  if (i %% 2 == 1 || nrow(corr_results[[1]]) == 1) {  # Apre una nuova pagina se i è dispari o c'è solo un plot
+    par(mfrow=c(2, 1))
+  }
+
+  # Seleziona i dati per il plot
+  x <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature1"]) 
+  y <- dplyr::select(corr_results[[6]], corr_results[[1]][i, "Feature2"]) 
+
+  # Calcola il modello di regressione lineare e aggiungi la linea di regressione
+  model <- lm(y[, 1] ~ x[, 1])
+  # Calcola R^2 e aggiungi il testo al plot
+  r <- summary(model)$r.squared
+  # Crea il plot
+  plot(x[, 1], y[, 1], 
+       main = "Scatter Plot",
+       xlab = corr_results[[1]][i, "Feature1"], 
+       ylab = corr_results[[1]][i, "Feature2"], 
+       cex.lab = 0.75)
+  
+  abline(model, col = "red")
+  mtext(paste("R^2:", round(r, 2)), side = 3, line = 0.5, adj = 0)
+  # Non chiudere il dispositivo dopo ogni plot
+}
+
+# Chiudi il dispositivo PDF dopo che tutti i plot sono stati generati
+dev.off()
+
+```
+
+# Benchmark of mIFs vs IMC data
+```{r Correlation mIFs vs IMC}
+# loading mIF DENSITIES files and using the same patient names convention.  
+IF1 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_densities.csv", header = 1, row.names = 1)
+rownames(IF1) <- rownames(IF1) %>% 
+  str_remove_all("-IF1-01")
+
+IF2 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_densities.csv", header = 1, row.names = 1)
+rownames(IF2) <- rownames(IF2) %>% 
+  str_remove_all("-IF2-01")
+
+IF3 <- read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_densities.csv", header = 1, row.names = 1)
+rownames(IF3) <- rownames(IF3) %>% 
+  str_remove_all("-IF3-01")
+
+# Keeping only common patients and saving the file
+common_patients <- Reduce(intersect, list(rownames(IF1), rownames(IF2), rownames(IF3))) # Reduce because to apply intersect on more sets, you should reduce the common intersection progressively
+IFs <- cbind(IF1[common_patients,], IF2[common_patients,], IF3[common_patients,])
+
+# write.csv(IFs, "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_densities.csv")
+
+# Computing correlation between mIFs densities vs IMC densities
+corr_method <- "spearman"
+imaging = "IMC"
+imaging2 = "mIFs"
+p_value_threshold <- 0.05 
+low_corr <- -0.5
+high_corr <- 0.5
+
+corr_results <- compute_correlation(deconv_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/all_IFs_cell_type_densities.csv",
+                         imaging_path = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv",
+                         imaging_pattern_to_remove = "",
+                         deconv_pattern_to_remove = "-FIXT-01",
+                         significance_level = p_value_threshold,
+                         low_corr_threshold = low_corr,
+                         high_corr_threshold = high_corr,
+                         cor_type = corr_method,
+                         imaging_type = imaging,
+                         deconv_type = imaging2)
+
+plot_correlation_matrix(high_corr_pairs = corr_results[[1]],
+                        cor_type = corr_method,
+                        file_name = paste(imaging2, "vs", imaging, sep = "_"),
+                        output_folder = "/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/",
+                        save_png = T,
+                        x_label = imaging,
+                        y_label = imaging2,
+                        significance_level = p_value_threshold,
+                        high_corr_threshold = high_corr,
+                        low_corr_threshold = low_corr)
+
+
+# ggplot(a, aes(x=B_fraction, y=XCell_B_cell)) +
+#   geom_point() +
+#   geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)
+
+```
+
+# TO DO
+```{r}
+ 
+# Analisi Risultati di deconvoluzione in termini di stackable histograms
+# heatmap sui samples e PCA sulla deconvoluzione
+
+# CellTFusion
+```
+
+
+# Saving file
+```{r Saving file}
+# Write file in the correct format for deconvolution
+TPM <- rownames_to_column(TPM, "Genes") 
+name <- "NSCLC2" 
+
+write.table(TPM, file = paste0(output_folder, name,"_TPM.txt"), quote = F, sep = "\t", row.names = F)
+message(paste0(output_folder, name,"_TPM.txt"))
+```
+
+# Correlation splitting by cell types Deconvolution IMC
+```{r Correlation splitting by cell types IMC}
+imaging_method = "IMC"
+Deconv_method = "Deconv"
+corr_method <- "spearman"
+
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
+imaging = imaging[,-1]
+
+imaging = imaging %>%
+  rename("B" = "B.cells",
+         "CD4" = "CD4.cells",
+          "CD8" = "CD8.cells",
+          "DC" = "Dendritic.cells",
+          "MacCD163" = "Macrophages.M1",
+          "NK" = "NK.cells",
+          "Treg" = "T.cells.regulatory",
+          "Tumor" = "Cancer",
+          "plasma" = "Plasma")
+
+source('~/CellTFusion/src/cell_deconvolution.R')
+
+deconv = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt", header = 1, row.names = 1)
+
+rownames(deconv) <- str_remove_all(string = rownames(deconv), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
+
+common_patients <- intersect(rownames(deconv), rownames(imaging))
+
+# Subset the data for common patients
+imaging_common <- imaging[common_patients,]
+deconv_common <- deconv[common_patients, ]
+
+deconv_common.fixed = fix.names.GEMDeCan(deconv_common)
+source('/home/francesco.massaini/Desktop/IMMUCAN_Internship_code/pseudobulk_function.R')
+
+benchmarking_deconvolution(deconvolution = deconv_common.fixed, groundtruth = imaging_common, corr_type = corr_method, file_name = paste0("correlation_", Deconv_method, "_vs_", imaging_method, "_", corr_method), scatter = TRUE, imaging_type = imaging_method, coord_x = 1, coord_y = 1000)
+
+```
+
+# Correlation splitting by cell types Deconvolution IMC specific for Mural # TO DO
+```{r Correlation splitting by cell types IMC}
+imaging_method = "IMC"
+Deconv_method = "Deconv"
+corr_method <- "spearman"
+
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
+imaging = select(imaging, Mural)
+
+source('~/CellTFusion/src/cell_deconvolution.R')
+
+deconv = read.delim("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt", header = 1, row.names = 1)
+
+rownames(deconv) <- str_remove_all(string = rownames(deconv), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01")
+
+common_patients <- intersect(rownames(deconv), rownames(imaging))
+
+# Subset the data for common patients
+imaging_common <- imaging[common_patients,]
+deconv_common <- deconv[common_patients, ]
+
+deconv_common.fixed = fix.names.GEMDeCan(deconv_common)
+
+IMC_Deconv <- cbind(deconv_common.fixed, imaging_common)
+
+Mural_corr <- rcorr(y =deconv_common.fixed,x =imaging_common, type = "spearman")
+View(Mural_corr$r)
+# my_cor<-cor$r[c("hp","wt"),c("mpg","disp")]
+
+```
+
+
+# Correlation splitting by cell types CellTFusion IMC
+```{r Correlation splitting by cell types IMC}
+imaging_method = "IMC"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IMC_cell_type_densities.csv", row.names = 1)
+imaging = imaging[,-1]
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IMC_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IMC/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+```
+
+# Correlation splitting by cell types CellTFusion mIFs
+```{r Correlation splitting by cell types mIFs}
+# IF1
+
+imaging_method = "IF1"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF1_cell_type_fraction.csv", row.names = 1)
+imaging = imaging[,-1]
+rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01|-IF1-01")
+
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IF1/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+
+# IF2
+imaging_method = "IF2"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF2_cell_type_fraction.csv", row.names = 1)
+imaging = imaging[,-1]
+rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01|-IF2-01")
+
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IF2/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+
+# IF3
+imaging_method = "IF3"
+Deconv_method = "CellTFusion"
+corr_method <- "spearman"
+imaging = read.csv("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/01_IF_IMC/IF3_cell_type_fraction.csv", row.names = 1)
+imaging = imaging[,-1]
+rownames(imaging) <- str_remove_all(string = rownames(imaging), pattern = "-RNA-01|-RNA-02|-RNA-04|-FIXT-01|-IF3-01")
+
+
+load("/home/francesco.massaini/Desktop/IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/IF_CellTFusion_result/CellTFusion_Subgroups.RData")
+common_patients <- intersect(rownames(imaging), rownames(dt[[1]]))
+imaging_common <- imaging[common_patients,]
+# Correlation by cell types
+correlation <- function(data, corr) {
+  require(tidyr)
+  M <- Hmisc::rcorr(as.matrix(data), type = corr)
+  Mdf <- map(M, ~data.frame(.x))
+  
+  corr_df = Mdf %>%
+    map(~rownames_to_column(.x, var="measure1")) %>%
+    map(~pivot_longer(.x, -measure1, names_to = "measure2")) %>%
+    bind_rows(.id = "id") %>%
+    pivot_wider(names_from = id, values_from = value) %>%
+    mutate(sig_p = ifelse(P < .05, T, F),
+           p_if_sig = ifelse(sig_p, P, NA),
+           r_if_sig = ifelse(sig_p, r, NA)) 
+  
+  return(corr_df)
+  
+}
+
+dt_cell_types = dt[["Deconvolution groups per cell types"]]
+
+for (i in names(dt_cell_types)) {
+  imaging_common <- imaging[common_patients,]
+  #imaging_common <- imaging_common[, c(i,setdiff(names(imaging_common), i))] 
+  if(ncol(dt_cell_types[[i, drop = FALSE]]) != 0){
+    
+    df_corr_cell_type <- cbind(imaging_common, dt_cell_types[[i, drop = FALSE]])
+    x <- correlation(df_corr_cell_type, corr = corr_method)
+    x = filter(x, (measure1 %in% colnames(imaging_common) & measure2 %in% colnames(dt_cell_types[[i]]))) %>%# only taking ground vs deconv
+      arrange(desc(r))
+    
+    pdf(paste0("../IMMUCAN_data/NSCLC2/04_CellTFusion/Whitout_CD226_and_without_patient3/Correlations/Splitting_celltype/IF3/", Deconv_method, "_", i ,"_vs_", imaging_method , "_", corr_method,".pdf"), width = 15)
+    p = ggplot(data = x, aes(y = measure2, x = measure1, fill=r, label=round(r_if_sig,2))) +
+      geom_tile() +
+      labs(fill = paste0(corr_method, "'s\nCorrelation"), title = paste("Correlations", Deconv_method ,"Features vs", imaging_method),
+             subtitle = paste0("Only significant ", corr_method, "'s correlation coefficients shown.")) +
+      scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+      geom_text() +
+      theme_classic() +
+      scale_x_discrete(expand=c(0,0)) +
+      scale_y_discrete(expand=c(0,0)) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.text.y = element_text(size = 10)) +
+      xlab(imaging_method) + 
+      ylab(Deconv_method)
+    print(p)
+    dev.off()
+  }
+}
+```

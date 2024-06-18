@@ -78,10 +78,10 @@ colSums(merged_counts) # Not yet normalized to TPM
 TPM_forDeconv = merged_counts %>%  
   filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>%
   remove_gene_version() %>%
-  EnsemblID_to_GeneSymbol() %>%
+  EnsemblID_to_GeneSymbol() %>% # Deconv requires gene symbols
   counts_to_TPM(., log=T)
 
-#write.table(TPM_forDeconv, "../IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM.txt", sep = "\t")
+#write.table(TPM_forDeconv, "../IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM_forDecov.txt", sep = "\t")
 ```
 # For basic clustering methods we need to start with filtering steps
 ## 1. Filtering low expressed genes
