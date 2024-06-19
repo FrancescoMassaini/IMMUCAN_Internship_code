@@ -2,33 +2,33 @@ library(ggplot2)
 library(ggdendro)
 library(dendextend)
 
-dfs_same_patients_same_order <- function(expr_df, sample_feat_df, expr_patients_on_rows = FALSE, clinical_patients_on_rows = TRUE) {
-  # Initial transpose of the expression dataframe
-  
-  df_transposed <- as.data.frame(t(expr_df))
-
-  # Merging with patient metadata
-  df_merged <- merge(df_transposed, sample_feat_df, by = 0) %>% 
-    column_to_rownames(var = "Row.names")
-  
-  # Select columns excluding metadata for the expression dataframe
-  df_expr <- dplyr::select(df_merged, -colnames(sample_feat_df))
-  
-  # Select only metadata columns for the clinical dataframe
-  df_clinical <- dplyr::select(df_merged, colnames(sample_feat_df))
-  
-  # Final transpose of dataframes based on parameters
-  if (expr_patients_on_rows == FALSE) {
-    df_expr <- as.data.frame(t(df_expr)) 
-  }
-  
-  if (clinical_patients_on_rows == FALSE) {
-    df_clinical <- as.data.frame(t(df_clinical))
-  }
-  
-  # Return both dataframes
-  list(expression_data = df_expr, clinical_data = df_clinical)
-}
+# expr_df wit patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
+# dfs_same_patients_same_order <- function(expr_df, sample_feat_df) {
+#   # Initial transpose of the expression dataframe
+#   df_transposed <- t(expr_df)
+# 
+#   # Merging with patient metadata
+#   df_merged <- merge(df_transposed, sample_feat_df, by = 0) %>% 
+#     column_to_rownames(var = "Row.names")
+#   
+#   # Select columns excluding metadata for the expression dataframe
+#   df_expr <- dplyr::select(df_merged, -colnames(sample_feat_df))
+#   
+#   # Select only metadata columns for the clinical dataframe
+#   df_clinical <- dplyr::select(df_merged, colnames(sample_feat_df))
+#   
+#   # Final transpose of dataframes based on parameters
+#   if (expr_patients_on_rows == FALSE) {
+#     df_expr <- as.data.frame(t(df_expr)) 
+#   }
+#   
+#   if (clinical_patients_on_rows == FALSE) {
+#     df_clinical <- as.data.frame(t(df_clinical))
+#   }
+#   
+#   # Return both dataframes
+#   list(expression_data = df_expr, clinical_data = df_clinical)
+# }
 
 
 # filter_common_patients <- function(df1, df2) {
@@ -153,53 +153,66 @@ compute_distribution <- function(data, plot_title, xlab, ylab = "Density", use_l
 }
 
 # Plots - Heatmap
-## patients need to start on columns
-Compute_Samples_Heatmap <- function(df, sample_feat_df = NULL, main_title = NULL){
+# expr_df with patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
+Compute_Heatmaps <- function(expr_df, sample_metadata_df = NULL){
+  # expr_df = DE_counts_df
+  # sample_metadata_df = clinical
   # Ensure same patients order
-  tmp = dfs_same_patients_same_order(expr_df = df, sample_feat_df = sample_feat_df, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
-  df = tmp[["expression_data"]]
-  sample_feat_df = tmp[["clinical_data"]]
+  if (identical(colnames(expr_df), rownames(sample_metadata_df))){
+    # Compute Heatmap on expr values
+    pheatmap(as.matrix(expr_df), main = "heatmap",
+             annotation_col = sample_metadata_df,
+             color = hcl.colors(50, "BluYl"),
+             show_colnames = T, show_rownames = T,
+             fontsize_col = 5, fontsize_row = 5, fontsize = 10)
+    
+    sampleDists <- dist(t(expr_df), method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
+    sampleDistMatrix <- as.matrix(sampleDists)
+    
+    # Compute sample vs sample Heatmap
+    pheatmap(sampleDistMatrix, main = "Sample vs samples heatmap",
+             annotation_col = sample_metadata_df,
+             color = hcl.colors(50, "BluYl"),
+             show_colnames = T, show_rownames = T,
+             fontsize_col = 5, fontsize_row = 5, fontsize = 10, 
+             #clustering_distance_rows=sampleDists, # Use the previously computed distance to show the clustering 
+             #clustering_distance_cols=sampleDists,
+             legend_breaks = c(min(sampleDistMatrix), max(sampleDistMatrix)),
+             legend_labels = c("Similar", "Distant"),
+             border = NA)  
+  }
+  else{
+    cat("patient are not in the same order")
+  }
   
-  # Compute Heatmap
-  sampleDists <- dist(df, method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
-  sampleDistMatrix <- as.matrix(sampleDists)
-  
-  pheatmap(sampleDistMatrix, main = main_title,
-           annotation_col = sample_feat_df,
-           color = hcl.colors(50, "BluYl"),
-           show_colnames = T, show_rownames = T,
-           fontsize_col = 5, fontsize_row = 5, fontsize = 10, clustering_method = 'complete',
-           legend_breaks = c(min(sampleDistMatrix), max(sampleDistMatrix)),
-           legend_labels = c("Similar", "Distant"),
-           border = NA)
 }
 
 
-# Plots - Dendrogram
-Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, main_title = NULL, palette_colors = "Dark2"){
-  # Ensure same patients order
-  tmp = dfs_same_patients_same_order(expr_df = df, sample_feat_df = sample_feat_df, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
-  df = tmp[["expression_data"]]
-  sample_feat_df = tmp[["clinical_data"]]
-  
-  # Compute Dendrogram
-  sampleTree = hclust(dist(df, method = 'euclidean'), method = "complete")
-  
-  dend_expr <- as.dendrogram(sampleTree)
-  tree_labels<- dendro_data(dend_expr, type = "rectangle")
-  tree_labels$labels <- cbind(tree_labels$labels, feat = as.factor(sample_feat_df[,feat_column]))
-  
-  ggplot() +
-    geom_segment(data = segment(tree_labels), aes(x=x, y=y, xend=xend, yend=yend))+
-    geom_segment(data = tree_labels$segments %>%
-                 filter(yend == 0) %>%
-                 left_join(tree_labels$labels, by = "x"), aes(x=x, y=y.x, xend=xend, yend=yend, color = feat)) +
-    # geom_text(data = label(tree_labels), aes(x=x, y=y, label=label, colour = feat, hjust=0), size=1) +
-    coord_flip() +
-    scale_y_reverse(expand=c(0.2, 0)) +
-    scale_colour_brewer(palette = palette_colors, name = feat_column) + 
-    theme_dendro()
-}
+# # Plots - Dendrogram
+# Compute_Samples_dendrogram <- function(df, sample_feat_df, feat_column = NULL, main_title = NULL, palette_colors = "Dark2"){
+#   # Ensure same patients order
+#   tmp = dfs_same_patients_same_order(expr_df = df, sample_feat_df = sample_feat_df, expr_patients_on_rows = TRUE, clinical_patients_on_rows = TRUE)
+#   df = tmp[["expression_data"]]
+#   sample_feat_df = tmp[["clinical_data"]]
+#   
+#   # Compute Dendrogram
+#   sampleTree = hclust(dist(df, method = 'euclidean'), method = "complete")
+#   
+#   dend_expr <- as.dendrogram(sampleTree)
+#   tree_labels<- dendro_data(dend_expr, type = "rectangle")
+#   tree_labels$labels <- cbind(tree_labels$labels, feat = as.factor(sample_feat_df[,feat_column]))
+#   
+#   ggplot() +
+#     geom_segment(data = segment(tree_labels), aes(x=x, y=y, xend=xend, yend=yend))+
+#     geom_segment(data = tree_labels$segments %>%
+#                  filter(yend == 0) %>%
+#                  left_join(tree_labels$labels, by = "x"), aes(x=x, y=y.x, xend=xend, yend=yend, color = feat)) +
+#     # geom_text(data = label(tree_labels), aes(x=x, y=y, label=label, colour = feat, hjust=0), size=1) +
+#     coord_flip() +
+#     scale_y_reverse(expand=c(0.2, 0)) +
+#     scale_colour_brewer(palette = palette_colors, name = feat_column) + 
+#     theme_dendro()
+# }
 
 # Plots - Violin plot
 Wrapped_violin_plot_by_clinical_feature <- function(df_long, metadata_df, metadata_var, facet_wrap_var){
