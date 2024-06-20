@@ -1,6 +1,11 @@
+library(dplyr)
+library(stringr)
 library(ggplot2)
 library(ggdendro)
 library(dendextend)
+library(grid)
+library(pheatmap)
+library(FactoMineR)
 
 # expr_df wit patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
 # dfs_same_patients_same_order <- function(expr_df, sample_feat_df) {
@@ -43,7 +48,7 @@ library(dendextend)
 #   return(list(df1 = df1_filtered, df2 = df2_filtered, common_patients = common_patients))
 # }
 
- 
+
 # # Remove version number from ENSEMBL ID
 remove_gene_version <- function(df_with_gene_version) {
   rownames(df_with_gene_version) <- rownames(df_with_gene_version) %>%
@@ -53,7 +58,7 @@ remove_gene_version <- function(df_with_gene_version) {
 
 # Converting from ENSEMBL ID to GENE SYMBOL. Use org.Hs.eg.db db 
 EnsemblID_to_GeneSymbol <- function(raw_counts_file, aggregation_method = "mean"){
-
+  
   entrz <- AnnotationDbi::select(org.Hs.eg.db, keys = rownames(raw_counts_file), columns = "SYMBOL", keytype = "ENSEMBL") # keys are the data to overlap. columns is the column to replace and keytype is the column where to find corrispondences   # entrz is a df storing ENSEMBL ID and GENE SYMBOLS. ENSEMBL ID are selected by the ROW NAMES of your raw_counts_file 
   raw_counts_file_gene_symbol <- raw_counts_file %>%
     mutate(ENSEMBL = rownames(raw_counts_file)) %>% # add a column
@@ -113,7 +118,7 @@ filter_low_variance_genes <- function(data, quantile_threshold = 0.05) {
   
   # Genes to keep
   keep = df[df$variance > quantile(df$variance, prob = quantile_threshold), "genes"]
-    
+  
   data = data[keep, ]
   return(data)
 }
@@ -154,37 +159,45 @@ compute_distribution <- function(data, plot_title, xlab, ylab = "Density", use_l
 
 # Plots - Heatmap
 # expr_df with patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
-Compute_Heatmaps <- function(expr_df, sample_metadata_df = NULL){
-  # expr_df = DE_counts_df
-  # sample_metadata_df = clinical
+Compute_Heatmaps <- function(expr_df, sample_metadata_df = NULL, 
+                             basic_pheatmap = TRUE,
+                             distance_method = "euclidean", 
+                             clustering_method = "complete") {
+  
   # Ensure same patients order
   if (identical(colnames(expr_df), rownames(sample_metadata_df))){
     # Compute Heatmap on expr values
-    pheatmap(as.matrix(expr_df), main = "heatmap",
-             annotation_col = sample_metadata_df,
-             color = hcl.colors(50, "BluYl"),
-             show_colnames = T, show_rownames = T,
-             fontsize_col = 5, fontsize_row = 5, fontsize = 10)
+    if (basic_pheatmap == TRUE){
+      pheatmap(as.matrix(expr_df), main = "heatmap", # Here none clustering or distance parameters has been used
+               annotation_col = sample_metadata_df,
+               color = hcl.colors(50, "BluYl"),
+               show_colnames = TRUE, show_rownames = FALSE,
+               fontsize_col = 5, fontsize_row = 5, fontsize = 10)
+      #grid.text("genes", x=0.55, y=0.5, rot=270)
+      grid.text("patients", x=0.3, y=0.1, rot=0)
+    }
     
-    sampleDists <- dist(t(expr_df), method = 'euclidean') #Compute distance of the matrix. DO NOT DO IT FOR GENES. dist take into account rows! So to look at the patients you need to transpose. Distance is computed with eucledian metric. Remember you need to transpose (t) the matrix because dist takes rows (and samples are into columns) 
-    sampleDistMatrix <- as.matrix(sampleDists)
     
     # Compute sample vs sample Heatmap
-    pheatmap(sampleDistMatrix, main = "Sample vs samples heatmap",
+    ## Sample distance 
+    sampleDists <- dist(t(expr_df), method = distance_method) 
+    sampleDistMatrix <- as.matrix(sampleDists)
+    
+    ## Pheatmap creation 
+    pheatmap(sampleDistMatrix, main = paste("Sample vs samples heatmap - distance:", distance_method, "clustering:" ,clustering_method),
              annotation_col = sample_metadata_df,
              color = hcl.colors(50, "BluYl"),
-             show_colnames = T, show_rownames = T,
+             show_colnames = TRUE, show_rownames = TRUE,
              fontsize_col = 5, fontsize_row = 5, fontsize = 10, 
-             #clustering_distance_rows=sampleDists, # Use the previously computed distance to show the clustering 
-             #clustering_distance_cols=sampleDists,
+             clustering_distance_rows = sampleDists, 
+             clustering_distance_cols = sampleDists,
+             clustering_method = clustering_method,
              legend_breaks = c(min(sampleDistMatrix), max(sampleDistMatrix)),
              legend_labels = c("Similar", "Distant"),
              border = NA)  
+  } else {
+    cat("Patients are not in the same order")
   }
-  else{
-    cat("patient are not in the same order")
-  }
-  
 }
 
 
@@ -213,6 +226,32 @@ Compute_Heatmaps <- function(expr_df, sample_metadata_df = NULL){
 #     scale_colour_brewer(palette = palette_colors, name = feat_column) + 
 #     theme_dendro()
 # }
+
+# Plots - PCA
+## Automatically compute on samples: SAMPLES MUST BE ON EXPR DF COLUMNS, as it is common to have
+Compute_PCA_biplot = function(expr_df, sample_metadata_df = NULL){
+  pca_result <- FactoMineR::PCA(t(expr_df), scale.unit = TRUE, graph = FALSE)  
+  PCs_var = fviz_eig(pca_result) # Scree plot: explained variance by PCs
+  print(PCs_var)
+  # basic PCA 
+  p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                                            palette = "Dark2", 
+                                            ggtheme = theme_minimal())
+  print(p)
+  
+  # PCA with clinical feature ellipses 
+  if(is.null(sample_metadata_df) == FALSE) {
+    for (feat in colnames(sample_metadata_df)){
+      p_with_feat = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+                                                habillage = as.factor(sample_metadata_df[,feat]),
+                                                addEllipses = T, ellipse.level=0.95, palette = "Dark2", 
+                                                legend.title = feat,
+                                                ggtheme = theme_minimal())
+      print(p_with_feat)
+    }
+  }
+  # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+}
 
 # Plots - Violin plot
 Wrapped_violin_plot_by_clinical_feature <- function(df_long, metadata_df, metadata_var, facet_wrap_var){

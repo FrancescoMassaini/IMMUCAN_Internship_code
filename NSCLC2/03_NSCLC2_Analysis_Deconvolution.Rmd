@@ -1,0 +1,97 @@
+---
+title: "NSCLC2 - Unsupervised Analysis: Deconvolution analysis"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Imports
+```{r Imports}
+suppressMessages(library(dplyr)) 
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(org.Hs.eg.db)) # Homo sapiens db
+suppressMessages(library(stringr))
+suppressMessages(library(RColorBrewer)) # for plot
+suppressMessages(library(pheatmap)) # for heatmaps
+suppressMessages(library(ADImpute)) # This package provides functions to compute TPM
+suppressMessages(library(ggplot2))
+suppressMessages(library(FactoMineR))
+suppressMessages(library(factoextra))
+suppressMessages(library(survival))
+suppressMessages(library(ranger))
+suppressMessages(library(ggfortify))
+suppressMessages(library(rlang))
+suppressMessages(library(purrr))
+suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
+suppressMessages(library(scales))
+```
+
+
+# Functions
+```{r Functions}
+source("../Functions.R")
+```
+
+# Loading Deconvolution Data
+```{r Loading Deconvolution}
+#### NOTE: These are Adenocarcinoma samples #####
+clinical = read.csv("../../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_Daniel_relevant_columns.csv", row.names = 1) # relevant clinical features already selected
+
+# Loading Deconvolution results
+deconv <- read.table("../../IMMUCAN_data/NSCLC2/03_Deconvolution/Whitout_CD226_and_without_patient3/all_deconvolutions_NSCLC2_TPM_withoutCD226_withoutPatient3.txt", header = TRUE,  sep = '\t', row.names = 1)
+rownames(deconv) = gsub(pattern = "-FIXT.*", 
+                              replacement = "",
+                              x = rownames(deconv))
+
+# Only common patients
+common_samples <- intersect(rownames(clinical), rownames(deconv)) 
+
+deconv <- deconv[common_samples,]
+clinical = clinical[common_samples,]
+
+# check if patients are in the same order
+identical(rownames(clinical), rownames(deconv))
+
+```
+## Scaling values
+```{r}
+# Some deconvolution methods have values >1. Let's scale this data
+columns_with_values_greater_than_one <- colnames(deconv)[apply(deconv, 2, function(x) any(x > 1))]
+filtered_deconv <- deconv[, columns_with_values_greater_than_one]
+#View(filtered_deconv) # only MCP method has values higher than 1
+colSums(filtered_deconv)
+deconv_scaled = deconv %>%
+  mutate(across(all_of(columns_with_values_greater_than_one), ~ rescale(.x, to = c(0, 1))))
+```
+
+
+
+# Analisys on Deconvolution results
+## Sample Heatmap
+NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r, fig.width=10, fig.height=10}
+# Heatmap on TPM, groups and outliers 
+Compute_Heatmaps(expr_df = as.data.frame(t(deconv_scaled)),  sample_metadata_df = clinical, basic_pheatmap = TRUE) 
+```
+## PCA biplot
+```{r fig.width=8, fig.height=8}
+# PCA biplot on Deconvolution
+Compute_PCA_biplot(expr_df = as.data.frame(t(deconv_scaled)),  sample_metadata_df = clinical)
+```
+# Correlation of deconvolution and IDA
+```{r}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_S.xls", header = TRUE, row.names = 1)
+
+# Correlation
+create_correlation_plot(data1 = deconv, data2 = metasample_df, correlation_type = "pearson", r_threshold = 0.7, p_threshold = 0.05)
+
+
+```
+```

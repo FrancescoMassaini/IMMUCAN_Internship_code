@@ -1,0 +1,267 @@
+---
+title: "NSCLC2 - Supervised Analysis: DE on death and adjuvant treatment"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Domande 
+- Lo shinkage e' necessario? Migliora effettivamente? Ci sono accorgimenti che devo prendere relativamente al fatto di avere 100 samples? Non l'ho fatto per il multifactor per rapidita' di analisi
+- Le threshold di filtering che ho usato sono sensate? (filtering low expr genes e zero counts)
+- Selezionare i risultati da results di DESeq si fa accedendo all'oggetto e selezionando i geni come ho fatto? Ho selezionato un FC > 1 o < -1 e con p_adj significativo e poi ordinato per FC   
+- Unire i geni over e under espressi in un unica df per poi farci l'heatmap e' corretto?
+- Cosa mi significano queste heatmaps e PCA? Death ecc si ragruppano come dovrebbero dato che sto facendo l'analisi su quello? E se vedo una specie di corrispondenza in altre varibili cliniche che mi significa? Sono "associate"?
+- Dovrei fare un enrichment dei geni trovati immagino adesso...
+- 1000 e passa geni quando unisco death e adj treat ... ha senso?
+
+
+
+# Imports
+```{r Imports}
+suppressMessages(library(dplyr)) 
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(org.Hs.eg.db)) # Homo sapiens db
+suppressMessages(library(stringr))
+suppressMessages(library(RColorBrewer)) # for plot
+suppressMessages(library(pheatmap)) # for heatmaps
+suppressMessages(library(ADImpute)) # This package provides functions to compute TPM
+suppressMessages(library(ggplot2))
+suppressMessages(library(FactoMineR))
+suppressMessages(library(factoextra))
+suppressMessages(library(survival))
+suppressMessages(library(ranger))
+suppressMessages(library(ggfortify))
+suppressMessages(library(rlang))
+suppressMessages(library(purrr))
+suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
+```
+
+
+# Functions
+```{r Functions}
+source("../Functions.R")
+```
+
+# Data loading and processiong
+## Load NSCLC2 data
+```{r}
+# Expression data
+raw_counts = read.delim("../../IMMUCAN_data/NSCLC2/01_Raw_Counts/NSCLC2_all_patients_counts_forDE.txt", sep = "\t", check.names = TRUE) # "-" it's automatically converted into "." with checknames = TRUE (default). With FALSE, the script crashes. Let's convert . into original - manually
+colnames(raw_counts) = str_replace_all(colnames(raw_counts), pattern = "\\.", replacement = "-")
+ 
+  
+
+# Clinical data
+clinical = read.csv("../../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_Daniel_relevant_columns.csv", row.names = 1) # Load
+```
+
+## Making sure the row names in clinical matches to columns names in raw_counts and with the same order (DEseq requirements)
+```{r}
+colnames(raw_counts) = str_split_i(colnames(raw_counts), pattern = "-FIXT-.*", i = 1) # no issues with multiple samples for each patients because there is only one sample for each patients
+
+clinical = clinical %>%
+  filter(rownames(.) %in% colnames(raw_counts)) # select only common patients 
+
+identical(rownames(clinical), colnames(raw_counts)) # identical checks also for the order
+
+```
+
+## pre-filtering: removing rows with low gene counts
+```{r}
+compute_distribution(data = raw_counts, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+filtered_raw_counts = filter_low_expr_genes(raw_counts, avg_expr_threshold = 12, zero_count_percent_threshold = 0.8) # filtering genes with average expression below 12 and genes with count of 0 in at least 80% of patients
+compute_distribution(data = filtered_raw_counts, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+cat("Number of final genes:", nrow(filtered_raw_counts), "\nInitial number of genes:",  nrow(raw_counts), "\n Difference:", nrow(raw_counts)-nrow(filtered_raw_counts))
+```
+
+
+# DESeq Analysis with one factor: death
+## Construct a DESeqDataSet object
+```{r}
+dds = DESeqDataSetFromMatrix(countData = filtered_raw_counts,
+                       colData = clinical,
+                       design = ~ death) # design specify the column of clinical data to use
+dds
+```
+## Set the factor level
+```{r}
+dds$death <- relevel(dds$death, ref = "Yes")
+```
+
+## Run DESeq on the previously created object
+```{r}
+dds <- DESeq(dds) # run DESeq and saving back results on the same object
+res <- results(dds) # saving DESeq results in res
+
+# Showing results
+res
+# results columns
+# baseMean : average of normalized counts
+# log2FoldChange : FC of genes compared between conditions     
+# lfcSE : standard estimate of logFC 
+# stat : wall test values for each genes
+# pvalue : pvalue
+# padj : padj for multiple testing
+
+
+# Shinkage step: this is supposed to be a better way to analyse high FC or low count genes (https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html)
+resLFC <- lfcShrink(dds, coef="death_No_vs_Yes", type="ashr")
+```
+## Explore Results 
+```{r}
+summary(res)
+summary(resLFC)
+cat("Number of adjusted p-values were less than 0.1: ", sum(res$padj < 0.1, na.rm=TRUE), "\n")
+```
+## MA plot
+```{r}
+DESeq2::plotMA(res, ylim=c(-2,2))
+DESeq2::plotMA(resLFC, ylim=c(-2,2))
+# Blu genes are significant differential expressed genes
+## NOTE: none genes in the top right corners (highly expressed - high mean normalized count - and high fold change)
+```
+## Over/Under expressed genes 
+Let's select significant and highly expressed (high normalized mean count) genes and sort by LFC
+```{r}
+FC_threshold = 1
+p_adj_threshold = 0.05
+
+overexpressed_genes <- resLFC[resLFC$log2FoldChange > FC_threshold & resLFC$padj < p_adj_threshold, ]
+length(overexpressed_genes@rownames)
+
+underexpressed_genes <- resLFC[resLFC$log2FoldChange < -FC_threshold & resLFC$padj < p_adj_threshold, ]
+length(underexpressed_genes@rownames)
+
+```
+
+## Ordering and combining results into a single df 
+```{r}
+# overexpressed genes
+df_overexpressed = data.frame("genes" = overexpressed_genes@rownames, 
+                              "base_mean" = overexpressed_genes@listData[["baseMean"]], 
+                              "logFC" = overexpressed_genes@listData[["log2FoldChange"]], 
+                              "p_adj" = overexpressed_genes@listData[["padj"]]) 
+logFC_order = order(df_overexpressed$logFC, decreasing = TRUE)
+
+df_overexpressed = df_overexpressed[logFC_order,]
+
+# underexpressed genes
+df_downexpressed = data.frame("genes" = underexpressed_genes@rownames, 
+                              "base_mean" = underexpressed_genes@listData[["baseMean"]], 
+                              "logFC" = underexpressed_genes@listData[["log2FoldChange"]], 
+                              "p_adj" = underexpressed_genes@listData[["padj"]]) 
+logFC_order = order(df_downexpressed$logFC, decreasing = TRUE)
+df_downexpressed = df_downexpressed[logFC_order,]
+
+# find selected genes on the inital counts df 
+ov_counts_df = filtered_raw_counts[df_overexpressed$genes,]
+# log transformation
+ov_counts_df = log2(ov_counts_df+1)
+
+un_counts_df = filtered_raw_counts[df_downexpressed$genes,]
+# log transformation
+un_counts_df = log2(un_counts_df+1)
+
+# merging in a final df
+DE_counts_df = rbind(ov_counts_df, un_counts_df)
+
+```
+
+## Showing results - heatmaps
+```{r fig.width=10, fig.height=8}
+Compute_Heatmaps(expr_df = DE_counts_df, sample_metadata_df = clinical)
+```
+
+## Showing results - PCA biplot
+```{r fig.width=10, fig.height=8}
+# PCA biplot
+Compute_PCA_biplot(DE_counts_df, clinical)
+```
+# DESeq Analysis with multiple factors: death + adjuvant treatment
+## Construct a DESeqDataSet object, run DESeq and finding results
+```{r}
+# clincal varibles as factors
+clinical[,"death"] <- as.factor(clinical[,"death"])
+clinical[,"adjuvant_treatment"] <- as.factor(clinical[,"adjuvant_treatment"])
+
+# Construct the object
+ddsMF = DESeqDataSetFromMatrix(countData = filtered_raw_counts,
+                       colData = clinical,
+                       design = ~ death + adjuvant_treatment + death:adjuvant_treatment) # design specify the column of clinical data to use
+ 
+
+# run DESeq
+ddsMF <- DESeq(ddsMF)
+
+# Questi e' l'approccio corretto per analizzare l'interazione tra i fattori. NON ANCORA FATTO
+# resInteraction <- results(ddsMF, name="deathadjuvant_treatmentYes")
+
+
+# store results - Analyzing only adj_treat effect
+resMFType <- results(ddsMF,
+                     contrast=c("adjuvant_treatment", "Yes", "No"))
+```
+
+## Over/Under expressed genes 
+Let's select significant and highly expressed (high normalized mean count) genes and sort by LFC
+```{r}
+FC_threshold = 1
+p_adj_threshold = 0.05
+# Geni sovraespressi
+overexpressed_genes_multifactor <- resMFType[resMFType$log2FoldChange > FC_threshold & resMFType$padj < p_adj_threshold, ]
+length(overexpressed_genes_multifactor@rownames)
+# Geni sottoespressi
+underexpressed_genes_multifactor <- resMFType[resMFType$log2FoldChange < -FC_threshold & resMFType$padj < p_adj_threshold, ]
+length(underexpressed_genes_multifactor@rownames)
+
+```
+## Ordering and combining results into a single df
+```{r}
+# overexpressed genes
+df_overexpressed_multifactor = data.frame("genes" = overexpressed_genes_multifactor@rownames, 
+                              "base_mean" = overexpressed_genes_multifactor@listData[["baseMean"]], 
+                              "logFC" = overexpressed_genes_multifactor@listData[["log2FoldChange"]], 
+                              "p_adj" = overexpressed_genes_multifactor@listData[["padj"]]) 
+logFC_order = order(df_overexpressed_multifactor$logFC, decreasing = TRUE)
+
+# underexpressed genes
+df_overexpressed_multifactor = df_overexpressed_multifactor[logFC_order,]
+
+df_downexpressed_multifactor = data.frame("genes" = underexpressed_genes_multifactor@rownames, 
+                              "base_mean" = underexpressed_genes_multifactor@listData[["baseMean"]], 
+                              "logFC" = underexpressed_genes_multifactor@listData[["log2FoldChange"]], 
+                              "p_adj" = underexpressed_genes_multifactor@listData[["padj"]]) 
+logFC_order = order(df_downexpressed_multifactor$logFC, decreasing = TRUE)
+
+df_downexpressed_multifactor = df_downexpressed_multifactor[logFC_order,]
+# find selected genes on the inital counts df 
+ov_counts_df_multifactor = filtered_raw_counts[df_overexpressed_multifactor$genes,]
+# log transformation
+ov_counts_df_multifactor = log2(ov_counts_df_multifactor+1)
+# find selected genes on the inital counts df 
+un_counts_df_multifactor = filtered_raw_counts[df_downexpressed_multifactor$genes,]
+# log transformation
+un_counts_df_multifactor = log2(un_counts_df_multifactor+1)
+# Merging into a single df 
+DE_counts_df_multifactor = rbind(ov_counts_df_multifactor, un_counts_df_multifactor)
+
+```
+
+## Showing results - heatmaps
+```{r fig.width=10, fig.height=8}
+Compute_Heatmaps(expr_df = DE_counts_df_multifactor, sample_metadata_df = clinical)
+```
+## Showing results - PCA biplot
+```{r fig.width=10, fig.height=8}
+# PCA biplot
+Compute_PCA_biplot(DE_counts_df_multifactor, clinical)
+```
+
+
+
+

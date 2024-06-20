@@ -1,0 +1,410 @@
+---
+title: "NSCLC2 - Unsupervised Analysis: TPM analysis"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Domande 
+- Hanno senso le threshold di filtraggio che ho messo? min avg expression (counts, non TPM ancora) di 12 e filtrare i geni che hanno un espressione di 0 perlomeno nel 90% dei samples. NB: 125 samples di partenza. Bulk RNA-seq. Ho messo anche dopo, una volta convertito in TPM una threshold per togliere il 20% dei geni a bassa varianza. Di fatto queste le ho scelte in modo da avere un numero di geni finali intorno alle 20 mila (partendo da circa 60 mila) 
+- Quando passo da ENSEMBL ID a GENE SYMBOL (mi serve per la deconvoluzione o per passare a TPM dato che non ho i file con le lunghezze delle read e devo basarmi sulla lunghezza media di ogni gene di ADImpute) molti geni risultano duplicati. Come li gestisco? Io pensavo o di prendere la media o la somma (perche tutto sommato i gene symbols duplicati fanno riferimenti a geni che per esempio si trovano in moleplici loci genici e quindi la conta totale in teoria e' la somma) Per evitare di avere valori troppo fuori norma ho preso la media
+- Non sono per niente sicuro che fare un UMAP su ~80 samples abbia senso, pero' si raggruppano
+
+
+
+# Imports
+```{r Imports}
+suppressMessages(library(dplyr)) 
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(org.Hs.eg.db)) # Homo sapiens db
+suppressMessages(library(stringr))
+suppressMessages(library(RColorBrewer)) # for plot
+suppressMessages(library(pheatmap)) # for heatmaps
+suppressMessages(library(ADImpute)) # This package provides functions to compute TPM
+suppressMessages(library(ggplot2))
+suppressMessages(library(FactoMineR))
+suppressMessages(library(factoextra))
+suppressMessages(library(survival))
+suppressMessages(library(ranger))
+suppressMessages(library(ggfortify))
+suppressMessages(library(rlang))
+suppressMessages(library(purrr))
+suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
+```
+
+# Functions
+```{r Functions}
+# personal functions
+source("../Functions.R")
+```
+
+# Load and processing data NSCLC2
+```{r}
+input_folder <- "../../IMMUCAN_data/NSCLC2/01_Raw_Counts/star_counts"
+# list of the count files (one for each patient)
+files <- list.files(path = input_folder, pattern = "\\.txt$", full.names = TRUE)
+
+# Merging all the patients files (single file for single patient) and removing gene version
+## empty list to store each df
+merged_counts = list()
+for (file in files){
+  counts <- read.delim(file, header = FALSE, row.names = 1)
+  colnames(counts) = str_split_i(basename(file), pattern = "_#_STAR_#", i = 1)
+  # Add counts df to merged_counts 
+  merged_counts[[length(merged_counts) + 1]] = counts
+}
+## Final combined df for all patients
+merged_counts = do.call(cbind, merged_counts)
+
+cat("Sum of counts across samples: \n")
+colSums(merged_counts) # Not yet normalized to TPM
+
+# Deconvolution methods already take into account low expressed and low variance genes so we can directly compute TPM (TPM are required for deconv analysis and CellTFusion)
+TPM_forDeconv = merged_counts %>%  
+  filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>% # final rows: since I don't have any other information about these final features I suppose they are a final summary and they are already taken into account in the counts that we have  
+  remove_gene_version() %>%
+  EnsemblID_to_GeneSymbol() %>% # Deconv requires gene symbols
+  counts_to_TPM(., log=T)
+
+#write.table(TPM_forDeconv, "../IMMUCAN_data/NSCLC2/02_TPM/NSCLC2_TPM_forDecov.txt", sep = "\t")
+
+# For Differential Expression analysis let's keep ENSEMBL ID and counts
+merged_counts_forDE = merged_counts %>%  
+  filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>%
+  remove_gene_version() 
+
+#write.table(merged_counts_forDE, "../../IMMUCAN_data/NSCLC2/01_Raw_Counts/NSCLC2_all_patients_counts_forDE.txt", sep = "\t")
+```
+# Filtering steps for basic clustering methods  
+## 1. Filtering low expressed genes
+```{r Distribution}
+cat("Summary of counts: \n")
+summary(merged_counts) # Not yet normalized to TPM
+
+compute_distribution(data = merged_counts, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
+merged_counts_filtered_forClustering = merged_counts %>%
+  filter(!rownames(.) %in% c("__no_feature", "__ambiguous", "__too_low_aQual", "__not_aligned", "__alignment_not_unique")) %>%
+  remove_gene_version() %>%
+  filter_low_expr_genes(., avg_expr_threshold = 12, zero_count_percent_threshold = 0.9)  # filtering genes with average expression below 12 and genes with count of 0 in at least 80% of patients
+
+compute_distribution(data = merged_counts_filtered_forClustering, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+```
+
+## 2. Filtering low variance genes
+```{r}
+# filtering out not useful rows and converting to GENE SYMBOLS
+merged_counts_filtered_forClustering_gene_symbol <- merged_counts_filtered_forClustering %>%
+  EnsemblID_to_GeneSymbol(., aggregation_method = "mean") # here many genes will be deleted due to the duplicated genes found with the conversion to gene symbol
+
+# ADImpute to normalize to TPM
+TPM_filtered_forClustering <- counts_to_TPM(merged_counts_filtered_forClustering_gene_symbol, log = F) %>% # not yet log2 transformed
+  filter_low_variance_genes(., quantile_threshold = 0.2) # Filter genes with variance in the lowest 20th percentile.
+
+cat("Number of final genes:", nrow(TPM_filtered_forClustering), "\n Number of starting genes:",  nrow(merged_counts), "\n Difference:", nrow(merged_counts)-nrow(TPM_filtered_forClustering))
+
+compute_distribution(data = TPM_filtered_forClustering, plot_title = "Distribution of TPM", xlab = "log2(TPM+1)", use_log = T) # log2(x+1)
+
+# log2(TPM+1) transformation after filtering steps
+TPM_filtered_forClustering = log2(TPM_filtered_forClustering+1)
+colSums(TPM_filtered_forClustering)
+```
+
+## Load clinical data and check for same order
+```{r}
+# Load clinical data 
+#### NOTE: This are Adenocarcinoma samples #####
+clinical = read.csv("../../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_Daniel_relevant_columns.csv", row.names = 1) # relevant clinical features already selected
+
+# Adjust the column names of TPM to match those in the clinical data (rownames in clinical data are obviously related to patients. However, TPM column names are sample identifiers).
+TPM_formatted_for_clinical = TPM_filtered_forClustering
+TPM_formatted_for_clinical = TPM_filtered_forClustering
+colnames(TPM_formatted_for_clinical) = gsub(pattern = "-FIXT.*",  
+                                            replacement = "",
+                                            x = colnames(TPM_formatted_for_clinical))
+# Check for duplicated column names
+## Information after "-FIXT" relates to sample IDs, so removing it retains only the patient ID. Here we check if this approach results in duplicated columns (i.e., multiple samples for the same patient)
+if(is_empty(which(duplicated(colnames(TPM_formatted_for_clinical))))) cat("No duplicated coolnames")
+
+# filtering common samples 
+common_samples = intersect(colnames(TPM_formatted_for_clinical), rownames(clinical))
+cat("Number of initial samples: ", length(colnames(TPM_formatted_for_clinical)), "\nNumber of common samples: ", length(common_samples), "\n difference: ", length(colnames(TPM_formatted_for_clinical))-length(common_samples), "\n")
+
+TPM_formatted_for_clinical = TPM_formatted_for_clinical[,common_samples]
+clinical = clinical[common_samples, ]
+
+# check if patients are in the same order
+identical(rownames(clinical), colnames(TPM_formatted_for_clinical))
+
+```
+
+# Analizing filtered TPM 
+## Sample Heatmap
+NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r, fig.width=10, fig.height=10}
+# Heatmap on TPM - looking for groups and outliers 
+
+## Define the different methods for distance and clustering
+distance_methods <- c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski")
+clustering_methods <- c("ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid")
+
+## Loop through each combination of distance and clustering methods
+for (dist_method in distance_methods) {
+  for (clust_method in clustering_methods) {
+    # Output the method being used
+    cat("Using distance method:", dist_method, "and clustering method:", clust_method, "\n")
+    
+    # Call the Compute_Heatmaps function with current methods
+    Compute_Heatmaps(expr_df = TPM_formatted_for_clinical,
+                     sample_metadata_df = clinical,
+                     distance_method = dist_method,
+                     clustering_method = clust_method,
+                     basic_pheatmap = FALSE)
+  }
+}
+
+
+# Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
+TPM_forBIODICA = TPM_formatted_for_clinical %>%
+  rownames_to_column(var = "genes")
+#write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+## PCA biplot
+```{r fig.width=8, fig.height=8}
+# PCA biplot on TPM
+clinical <- clinical %>%
+            mutate_all(~ifelse(is.na(.), "NA", .)) # Replace NA with "NA" to show NA values on fviz_pca_biplot
+
+# check if patients are in the same order
+identical(rownames(clinical), colnames(TPM_formatted_for_clinical))
+
+Compute_PCA_biplot(TPM_formatted_for_clinical, clinical)
+
+```
+
+## Umap 
+```{r}
+# UMAP on TPM
+clinical <- clinical %>% 
+  mutate(across(everything(), ~ifelse(. == "NA", NA, .))) # Restore NA 
+
+umap_result <- as.data.frame(umap(t(TPM_formatted_for_clinical), n_neighbors = 8, min_dist = 0.1, metric = "euclidean")) 
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+
+```
+
+## IDA BIODICA Analysis
+```{r fig.width=10, fig.height=10}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_S.xls", header = TRUE, row.names = 1)
+
+
+# Heatmap configuration
+heatmap_colors <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+# Show results
+metasample_df <- t(as.matrix(metasample_df))
+identical(colnames(metasample_df), rownames(clinical))
+
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Select most important ICs 
+chosen_IC = c("IC1", "IC2", "IC5", "IC6", "IC7")
+metasample_df_selected <- metasample_df[chosen_IC, , drop = FALSE]
+
+
+# Plot final SAMPLE heatmap
+pheatmap(metasample_df_selected, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         cluster_rows = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+# Prepare the data
+# Convert 'metasample_df' into a long format
+long_metasample <- as.data.frame(t(metasample_df)) %>% 
+  tibble::rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "IC", values_to = "Value")
+
+# Generate violin plots for each IC for each clinical variable
+clinical_vars = colnames(clinical) # List of clinical variables
+ICs = unique(long_metasample$IC)
+
+
+# Aggregate violin plot for each clinical variable
+for (clin_var in clinical_vars) {
+  Wrapped_violin_plot_by_clinical_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
+}
+
+# Specific significant violin plot
+for (clin_var in clinical_vars) {
+  for (IC_value in ICs){
+    df = long_metasample %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Sample, IC, Value)
+    
+   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+   }
+}
+```
+
+# Working only on most variable genes
+## Filtering Genes with High Variance
+```{r Define the most variable genes}
+# ADImpute to normalize to TPM
+TPM_high_variance_genes <- counts_to_TPM(merged_counts_filtered_forClustering_gene_symbol, log = F) %>% # not yet log2 transformed
+  filter_low_variance_genes(., quantile_threshold = 0.75)
+
+cat("Final nomber of genes: ", nrow(TPM_high_variance_genes))
+
+compute_distribution(data = TPM_high_variance_genes, plot_title = "Distribution of high variance genes - TPM", xlab = "log2(TPM+1)", use_log = T) # log2(x+1)
+
+# Finally convert TPM to log2(TPM+1)
+TPM_high_variance_genes = log2(TPM_high_variance_genes+1)
+```
+## Sample Heatmap
+NOTE: Expression df must be genes as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r, fig.width=10, fig.height=10}
+# Adapt rownames of TPM to clinical ones
+TPM_formatted_for_clinical_high_variance = TPM_high_variance_genes
+colnames(TPM_formatted_for_clinical_high_variance) = gsub(pattern = "-FIXT.*", 
+                              replacement = "",
+                              x = colnames(TPM_formatted_for_clinical_high_variance))
+
+TPM_formatted_for_clinical_high_variance <- TPM_formatted_for_clinical_high_variance[, common_samples]
+
+# check if patients are in the same order
+identical(rownames(clinical), colnames(TPM_formatted_for_clinical))
+
+# Heatmap on high variance TPM, groups and outliers 
+Compute_Heatmaps(expr_df = TPM_formatted_for_clinical_high_variance,  sample_metadata_df = clinical, basic_pheatmap = TRUE) 
+
+# Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
+TPM_forBIODICA = TPM_formatted_for_clinical_high_variance %>%
+  rownames_to_column(var = "genes")
+write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+## PCA biplot
+```{r fig.width=8, fig.height=8}
+# PCA biplot on TPM
+Compute_PCA_biplot(expr_df = TPM_formatted_for_clinical_high_variance, sample_metadata_df = clinical)
+```
+## Umap 
+```{r}
+# UMAP on high variance TPM
+umap_result <- as.data.frame(umap(t(TPM_formatted_for_clinical_high_variance), n_neighbors = 8, min_dist = 0.1, metric = "euclidean")) # t() it's not necessary beacuse TPM has been already transposed
+colnames(umap_result) <- c("UMAP1", "UMAP2")
+umap_result = rownames_to_column(umap_result, var = "samples")
+clinical_umap = rownames_to_column(clinical, var = "samples")
+umap_result = left_join(umap_result, clinical_umap, by = "samples")
+
+for (feat in colnames(clinical_umap)[-1]){
+  col = c("UMAP1", "UMAP2", feat)
+  umap_ggplot = dplyr::select(umap_result, all_of(col))
+  colnames(umap_ggplot)[3] = "feat" 
+  umap_plot <- ggplot(umap_ggplot, aes(x = UMAP1, y = UMAP2, color = feat)) +
+    geom_point(size = 3) +
+    labs(title = "UMAP of TPM Data", x = "UMAP1", y = "UMAP2") +
+    theme_minimal() + 
+    labs(color = feat)
+    print(umap_plot)
+}
+
+```
+## IDA BIODICA Analysis
+```{r fig.width=10, fig.height=10}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes_ica_S.xls", header = TRUE, row.names = 1)
+
+identical(rownames(metasample_df), rownames(clinical))
+
+# Heatmap configuration
+heatmap_colors <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+# Show results
+metasample_df <- t(as.matrix(metasample_df))
+identical(colnames(metasample_df), rownames(clinical))
+
+pheatmap(metasample_df, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+# Select most important ICs 
+chosen_IC = c("IC1", "IC2", "IC3", "IC4")
+metasample_df_selected <- metasample_df[chosen_IC, , drop = FALSE]
+
+
+# Plot final SAMPLE heatmap
+pheatmap(metasample_df_selected, main = "",
+         annotation_col = clinical,
+         color = heatmap_colors,
+         cluster_cols = TRUE,
+         cluster_rows = TRUE,
+         show_colnames = T, show_rownames = T,
+         fontsize_col = 8, fontsize_row = 8, fontsize = 10, clustering_method = 'complete',
+         border = NA)
+
+
+# Prepare the data
+# Convert into a long format
+long_metasample <- as.data.frame(t(metasample_df_selected)) %>% 
+  tibble::rownames_to_column("Sample") %>%
+  pivot_longer(-Sample, names_to = "IC", values_to = "Value")
+
+# Generate violin plots for each IC for each clinical variable
+clinical_vars = colnames(clinical) # List of clinical variables
+ICs = unique(long_metasample$IC)
+
+
+# Aggregate violin plot for each clinical variable
+for (clin_var in clinical_vars) {
+  Wrapped_violin_plot_by_clinical_feature(df_long = long_metasample, metadata_df = clinical, metadata_var = clin_var, facet_wrap_var = "IC")
+}
+
+# Specific significant violin plot
+for (clin_var in clinical_vars) {
+  for (IC_value in ICs){
+    df = long_metasample %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Sample, IC, Value)
+    
+   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+   }
+}
+```

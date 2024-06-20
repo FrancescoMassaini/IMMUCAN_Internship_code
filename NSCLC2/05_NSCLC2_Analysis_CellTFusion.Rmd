@@ -1,0 +1,118 @@
+
+---
+title: "NSCLC2"
+author: "Francesco Massaini"
+date: "2024-03-28"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Imports
+```{r Imports}
+suppressMessages(library(dplyr)) 
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(org.Hs.eg.db)) # Homo sapiens db
+suppressMessages(library(stringr))
+suppressMessages(library(RColorBrewer)) # for plot
+suppressMessages(library(pheatmap)) # for heatmaps
+suppressMessages(library(ADImpute)) # This package provides functions to compute TPM
+suppressMessages(library(ggplot2))
+suppressMessages(library(FactoMineR))
+suppressMessages(library(factoextra))
+suppressMessages(library(survival))
+suppressMessages(library(ranger))
+suppressMessages(library(ggfortify))
+suppressMessages(library(rlang))
+suppressMessages(library(purrr))
+suppressMessages(library(rio))
+suppressMessages(library(uwot))
+suppressMessages(library(DESeq2))
+```
+
+
+# Functions
+```{r Functions}
+source("../Functions.R")
+```
+
+# Loading CellTFusion results
+```{r Data loading}
+## BIG ISSUE, I SHOULD ANALIZE EVERTHING AGAIN WITH CELLTFUSION SELECTING THE NEW LUNG PATIENTS
+
+
+# Load CellTFusion results
+load("../../IMMUCAN_data/NSCLC2/04_CellTFusion/CellTFusion_Subgroups_NSCLC2.RData")
+load("../../IMMUCAN_data/NSCLC2/04_CellTFusion/CellTFusion_tfs_NSCLC2.RData")
+load("../../IMMUCAN_data/NSCLC2/04_CellTFusion/CellTFusion_modules_deconv_NSCLC2.RData")
+
+deconv_subgroups = dt[["Deconvolution matrix"]]
+TF_modules_deconv = as.data.frame(features_sig[[1]]) 
+```
+
+# Loading clinical data
+```{r Loading Deconvolution}
+# Load clinical data 
+clinical = read.csv("../../IMMUCAN_data/NSCLC2/01_Clinical_Data/Daniel/NSCLC2_Daniel_relevant_columns.csv", row.names = 1) # relevant clinical features already selected
+
+# Only common patients
+common_samples <- intersect(rownames(clinical), rownames(deconv_subgroups)) 
+
+deconv_subgroups <- deconv_subgroups[common_samples,]
+clinical = clinical[common_samples,]
+tfs = tfs[common_samples,]
+# check if patients are in the same order
+identical(rownames(clinical), rownames(deconv_subgroups))
+identical(rownames(clinical), rownames(tfs))
+```
+
+# CellTFusion Analisys post deconvolution subgrouping
+## Sample Heatmap
+NOTE: Expression df must be values as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r fig.width=10, fig.height=10, Heatmap}
+# CellTFusion already takes into account MCP values >1
+
+# Heatmap on deconvolution subgroups 
+Compute_Heatmaps(t(deconv_subgroups),  sample_metadata_df = clinical, basic_pheatmap = TRUE) 
+
+```
+
+## PCA biplot
+```{r fig.width=8, fig.height=8}
+# PCA biplot on deconvolution subgroups 
+Compute_PCA_biplot(expr_df = t(deconv_subgroups), sample_metadata_df = clinical)
+```
+
+## Correlation of deconvolution and IDA
+```{r}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_S.xls", header = TRUE, row.names = 1)
+
+# Correlation
+create_correlation_plot(data1 = deconv_subgroups, data2 = metasample_df, correlation_type = "pearson", r_threshold = 0.7, p_threshold = 0.05)
+```
+
+# CellTFusion Analisys on TF activity (modules) from CellTFusion 
+## Sample Heatmap
+NOTE: Expression df must be values as rows and patients as column. Clinical df must be patients as rows and feature as columns 
+```{r, fig.width=10, fig.height=10, HeatmapTFmodules}
+Compute_Heatmaps(t(tfs),  sample_metadata_df = clinical, basic_pheatmap = TRUE) 
+
+```
+
+## PCA biplot
+```{r fig.width=8, fig.height=8}
+# PCA biplot on tf activity matrix 
+Compute_PCA_biplot(expr_df = t(deconv_subgroups), sample_metadata_df = clinical)
+```
+# Correlation of deconvolution and IDA
+```{r}
+# Load MetaSample and MetaGene from BIODICA analysis. 
+metasample_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_A.xls", header = TRUE, row.names = 1)
+metagene_df <- read.table("/home/francesco.massaini/Projects/BIODICA/work/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ICA/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_ica_S.xls", header = TRUE, row.names = 1)
+
+# Correlation
+create_correlation_plot(data1 = tfs, data2 = metasample_df, correlation_type = "pearson", r_threshold = 0.7, p_threshold = 0.05)
+```
