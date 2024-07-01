@@ -8,6 +8,7 @@ library(pheatmap)
 library(FactoMineR)
 library(vegan)
 library(patchwork)
+library(lmtest)
 
 # expr_df wit patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
 # dfs_same_patients_same_order <- function(expr_df, sample_feat_df) {
@@ -440,21 +441,62 @@ Wrapped_violin_plot_by_clinical_feature <- function(df_long, metadata_df, metada
 }
 
 # Plots - Only significant violin plot
-significant_violin_plot = function(df_long, metadata_df, metadata_var, p_threshold = 0.05, main_title){
+significant_violin_plot = function(df_long, metadata_df, metadata_var, p_threshold = 0.05, normality_threshold = 0.05, main_title){
+  
+  # df_long = df 
+  # metadata_df = clinical 
+  # metadata_var = clin_var 
+  # p_threshold = 0.05 
+  # normality_threshold = 0.1
+  
   metadata_df = rownames_to_column(metadata_df, var = "Sample")
+  
+  # Assuming only ONE numeric column 
+  numeric_col <- names(df_long)[sapply(df_long, is.numeric)]
+  if (length(numeric_col) != 1) {
+    stop("There are more than one numeric column")
+  }
+  
+  
   tmp_clinical = metadata_df[, c("Sample", metadata_var), drop = FALSE]
   colnames(tmp_clinical) = c("Sample", "clin")
   merged <- left_join(df_long, tmp_clinical, by = "Sample")
+  colnames(merged)[colnames(merged) == numeric_col] <- "Value"
   
-  test_result <- aov(Value ~ clin, data = merged)
-  summary_test_result <- summary(test_result)
-  p_value = summary_test_result[[1]]$'Pr(>F)'[1]
+  clinc_groups = unique(merged$clin)
+  
+  normality_pvalues = list()
+  for (clinc_group in clinc_groups){
+    data = merged %>% 
+      dplyr::filter(clin == clinc_group) %>% 
+      dplyr::select(Value)
+    shapiro_test <- shapiro.test(data$Value)
+    normality_pvalues = append(normality_pvalues, shapiro_test[["p.value"]])
+  }
+  
+  if (all(unlist(normality_pvalues)) < normality_threshold){
+    # ANOVA TEST
+    test_result <- aov(Value ~ clin, data = merged)
+    summary_test_result <- summary(test_result)
+    p_value = summary_test_result[[1]]$'Pr(>F)'[1]
+    
+    test_type = "ANOVA"
+  }
+  else{
+    # Kruskal-Wallis 
+    test_result <- kruskal.test(Value ~ clin, data = merged)
+    p_value = test_result[["p.value"]]
+    
+    test_type = "Kruskal-Wallis"
+  }
+  
+  # ADD TEST FOR Homoscedasticity ??
   
   if (!is.na(p_value) && p_value < p_threshold) {  # Check p-value
     p <- ggplot(merged, aes(x = clin, y = Value, fill = clin)) +
       geom_violin(trim = FALSE) +
       geom_jitter(width = 0.2, alpha = 0.5, size = 1.5, color = "black") +
-      labs(title = paste(main_title, "p value: ", round(p_value, digits = 2)), y = "IC Level", x = clin_var, fill = clin_var) +
+      labs(title = paste(main_title, "Statistic test: ", test_type, "p value: ", round(p_value, digits = 3)), y = "IC Level", x = metadata_var, fill = metadata_var) +
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     print(p)

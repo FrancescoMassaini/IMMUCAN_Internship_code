@@ -333,9 +333,19 @@ for (clin_var in clinical_vars) {
       dplyr::filter(IC == IC_value) %>%
       dplyr::select(Sample, IC, Value)
     
-   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+   significant_violin_plot(df_long = df, metadata_df = clinical, metadata_var = clin_var, p_threshold = 0.05, normality_threshold = 0.1, main_title = paste("Significant violin plot for", IC_value))
    }
 }
+
+
+for (IC_value in ICs){
+    df = long_metasample %>%
+      dplyr::filter(IC == IC_value) %>%
+      dplyr::select(Sample, IC, Value)
+    
+   significant_violin_plot(df_long = df, metadata_df = gender_adj_treat, metadata_var = "gender_treat", p_threshold = 0.05, main_title = paste("Significant violin plot for", IC_value))
+}
+
 ```
 
 # Working only on most variable genes
@@ -429,7 +439,7 @@ gene_info_high_variance <- getBM(attributes = c('hgnc_symbol', 'ensembl_gene_id'
                    filters = 'hgnc_symbol',
                    values = genes_high_variance,
                    mart = ensembl)
-gene_info_high_variance[,"description"] = str_remove_all(gene_info$description, pattern = "\\[Source:HGNC Symbol.*")
+gene_info_high_variance[,"description"] = str_remove_all(gene_info_high_variance$description, pattern = "\\[Source:HGNC Symbol.*")
   
 ```
 
