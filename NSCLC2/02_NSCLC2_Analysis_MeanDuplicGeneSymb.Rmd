@@ -35,6 +35,7 @@ suppressMessages(library(purrr))
 suppressMessages(library(rio))
 suppressMessages(library(uwot))
 suppressMessages(library(DESeq2))
+library(biomaRt)
 ```
 
 # Functions
@@ -94,6 +95,7 @@ merged_counts_filtered_forClustering = merged_counts %>%
   filter_low_expr_genes(., avg_expr_threshold = 12, zero_count_percent_threshold = 0.9)  # filtering genes with average expression below 12 and genes with count of 0 in at least 80% of patients
 
 compute_distribution(data = merged_counts_filtered_forClustering, plot_title = "Distribution of counts", xlab = "log2(Counts+1)", use_log = T) # log2(x+1)
+
 ```
 
 ## 2. Filtering low variance genes
@@ -112,6 +114,8 @@ compute_distribution(data = TPM_filtered_forClustering, plot_title = "Distributi
 
 # log2(TPM+1) transformation after filtering steps
 TPM_filtered_forClustering = log2(TPM_filtered_forClustering+1)
+
+
 colSums(TPM_filtered_forClustering)
 ```
 
@@ -150,32 +154,35 @@ NOTE: Expression df must be genes as rows and patients as column. Clinical df mu
 # Heatmap on TPM - looking for groups and outliers 
 
 ## Define the different methods for distance and clustering
-distance_methods <- c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski")
-clustering_methods <- c("ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid")
+distance_methods <- c("euclidean", "maximum", "manhattan", "minkowski", "pearson","spearman")
+                      #"canberra", "binary", 
+clustering_methods <- c("ward.D2", "complete", "average") 
+                        #"mcquitty", "median", "centroid"
 
 ## Loop through each combination of distance and clustering methods
 for (dist_method in distance_methods) {
   for (clust_method in clustering_methods) {
-    # Output the method being used
+   # Output the method being used
     cat("Using distance method:", dist_method, "and clustering method:", clust_method, "\n")
     
     # Call the Compute_Heatmaps function with current methods
     Compute_Heatmaps(expr_df = TPM_formatted_for_clinical,
-                     sample_metadata_df = clinical,
-                     distance_method = dist_method,
-                     clustering_method = clust_method,
-                     basic_pheatmap = FALSE)
+                   sample_metadata_df = clinical,
+                   distance_method = dist_method,
+                   clustering_method = clust_method,
+                   basic_pheatmap = TRUE, 
+                   sample_vs_sample = TRUE)
   }
 }
-
 
 # Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
 TPM_forBIODICA = TPM_formatted_for_clinical %>%
   rownames_to_column(var = "genes")
 #write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 ```
+
 ## PCA biplot
-```{r fig.width=8, fig.height=8}
+```{r}
 # PCA biplot on TPM
 clinical <- clinical %>%
             mutate_all(~ifelse(is.na(.), "NA", .)) # Replace NA with "NA" to show NA values on fviz_pca_biplot
@@ -183,8 +190,60 @@ clinical <- clinical %>%
 # check if patients are in the same order
 identical(rownames(clinical), colnames(TPM_formatted_for_clinical))
 
-Compute_PCA_biplot(TPM_formatted_for_clinical, clinical)
+Compute_PCA_biplot(TPM_formatted_for_clinical, clinical, num_arrows = 5)
+#ggsave("./combined_pca.png", plot = p, width = 20, height = 10, units = "in")
 
+```
+## Compare Gender and Adj treatment 
+```{r}
+gender_adj_treat = clinical %>%
+  mutate(gender_treat = paste("Gender", gender, "Adj_treat", adjuvant_treatment, sep = "_")) %>%
+  dplyr::select(gender_treat)
+
+pca_result = Compute_PCA_biplot(TPM_formatted_for_clinical, gender_adj_treat, num_arrows = 10, ellipse_area = 0.8)
+
+pca_cos2 =  as.data.frame(pca_result[["var"]][["cos2"]]) %>%
+  dplyr::select(Dim.1, Dim.2) %>%
+  dplyr::rename(cos2_Dim1 = Dim.1,
+         cos2_Dim2 = Dim.2)
+
+df_long <- pca_cos2 %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+ggplot(df_long, aes(x = Value, fill = Variable)) + 
+  geom_density(alpha = 0.5) + 
+  facet_wrap(~ Variable, scales = "free") +
+  labs(title = "Kernel Density Function by feature",
+       x = "Value",
+       y = "Density") +
+  theme_minimal()
+
+genes = rownames(pca_cos2[pca_cos2$cos2_Dim1 >= 0.6,])
+write.table(genes, "./genes_test.txt", sep="\n", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+gene_info <- getBM(attributes = c('hgnc_symbol', 'ensembl_gene_id', 'description'),
+                   filters = 'hgnc_symbol',
+                   values = genes,
+                   mart = ensembl)
+gene_info[,"description"] = str_remove_all(gene_info$description, pattern = "\\[Source:HGNC Symbol.*")
+  
+```
+
+
+## PCoA and NMDS 
+```{r}
+# distance_methods <- c("euclidean", "canberra", "manhattan", "jaccard", "pearson","spearman")
+
+# PCoA and NMDS (NMDS is computed on ranks of the distance matrix)
+# for (dist_method in distance_methods) {
+#   compute_pcoa(TPM_formatted_for_clinical, sample_metadata_df = clinical, distance_method = dist_method)
+#   compute_nmds(TPM_formatted_for_clinical, sample_metadata_df = clinical, distance_method = dist_method)
+# }
+
+
+# compute_pcoa_3d(expr_df = TPM_formatted_for_clinical, sample_metadata_df = clinical, distance_method = "euclidean")
+
+# NOT SHOWN BECAUSE THE RESULTS ARE SIMILAR TO THE MORE COMMON PCA
 ```
 
 ## Umap 
@@ -307,19 +366,73 @@ TPM_formatted_for_clinical_high_variance <- TPM_formatted_for_clinical_high_vari
 # check if patients are in the same order
 identical(rownames(clinical), colnames(TPM_formatted_for_clinical))
 
+distance_methods <- c("euclidean", "maximum", "manhattan", "minkowski", "pearson","spearman")
+                      #"canberra", "binary", 
+clustering_methods <- c("ward.D2", "complete", "average") 
+
 # Heatmap on high variance TPM, groups and outliers 
-Compute_Heatmaps(expr_df = TPM_formatted_for_clinical_high_variance,  sample_metadata_df = clinical, basic_pheatmap = TRUE) 
+for (dist_method in distance_methods) {
+  for (clust_method in clustering_methods) {
+   # Output the method being used
+    cat("Using distance method:", dist_method, "and clustering method:", clust_method, "\n")
+    
+    # Call the Compute_Heatmaps function with current methods
+    Compute_Heatmaps(expr_df = TPM_formatted_for_clinical_high_variance,
+                   sample_metadata_df = clinical,
+                   distance_method = dist_method,
+                   clustering_method = clust_method,
+                   basic_pheatmap = FALSE, 
+                   sample_vs_sample = TRUE)
+  }
+} 
 
 # Save the file in the right format for BIODICA INDIPENDENT COMPONENT ANALYSIS (IDA)
 TPM_forBIODICA = TPM_formatted_for_clinical_high_variance %>%
   rownames_to_column(var = "genes")
-write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+#write.table(TPM_forBIODICA, "/home/francesco.massaini/Projects/BIODICA/data/TPM_NSCLC2_Biodica_meanDuplGenes_Adenocarcinoma_highly_variable_genes.txt", sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
 ```
 ## PCA biplot
 ```{r fig.width=8, fig.height=8}
 # PCA biplot on TPM
-Compute_PCA_biplot(expr_df = TPM_formatted_for_clinical_high_variance, sample_metadata_df = clinical)
+Compute_PCA_biplot(expr_df = TPM_formatted_for_clinical_high_variance, sample_metadata_df = clinical, ellipse_area = 0.8)
+# Add Adj treat and gender combination
+Compute_PCA_biplot(expr_df = TPM_formatted_for_clinical_high_variance, sample_metadata_df = gender_adj_treat, ellipse_area = 0.8)
 ```
+## Compare Gender and Adj treatment 
+```{r}
+gender_adj_treat_high_variance = clinical %>%
+  mutate(gender_treat = paste("Gender", gender, "Adj_treat", adjuvant_treatment, sep = "_")) %>%
+  dplyr::select(gender_treat)
+
+pca_result = Compute_PCA_biplot(TPM_formatted_for_clinical_high_variance, gender_adj_treat_high_variance, num_arrows = 10, ellipse_area = 0.8)
+
+pca_cos2 =  as.data.frame(pca_result[["var"]][["cos2"]]) %>%
+  dplyr::select(Dim.1, Dim.2) %>%
+  dplyr::rename(cos2_Dim1 = Dim.1,
+         cos2_Dim2 = Dim.2)
+
+df_long <- pca_cos2 %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+ggplot(df_long, aes(x = Value, fill = Variable)) + 
+  geom_density(alpha = 0.5) + 
+  facet_wrap(~ Variable, scales = "free") +
+  labs(title = "Kernel Density Function by feature",
+       x = "Value",
+       y = "Density") +
+  theme_minimal()
+
+genes_high_variance = rownames(pca_cos2[pca_cos2$cos2_Dim1 >= 0.6,])
+write.table(genes_high_variance, "./genes_test_high_variance.txt", sep="\n", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+gene_info_high_variance <- getBM(attributes = c('hgnc_symbol', 'ensembl_gene_id', 'description'),
+                   filters = 'hgnc_symbol',
+                   values = genes_high_variance,
+                   mart = ensembl)
+gene_info_high_variance[,"description"] = str_remove_all(gene_info$description, pattern = "\\[Source:HGNC Symbol.*")
+  
+```
+
 ## Umap 
 ```{r}
 # UMAP on high variance TPM
@@ -342,6 +455,23 @@ for (feat in colnames(clinical_umap)[-1]){
 }
 
 ```
+## PCoA and NMDS 
+```{r}
+# distance_methods <- c("euclidean", "canberra", "manhattan", "jaccard", "pearson","spearman")
+# 
+# # PCoA and NMDS (NMDS is computed on ranks of the distance matrix)
+# for (dist_method in distance_methods) {
+#    compute_pcoa(TPM_formatted_for_clinical_high_variance, sample_metadata_df = clinical, distance_method = dist_method)
+#    compute_nmds(TPM_formatted_for_clinical_high_variance, sample_metadata_df = clinical, distance_method = dist_method)
+# }
+# 
+# 
+# compute_pcoa_3d(expr_df = TPM_formatted_for_clinical_high_variance, sample_metadata_df = clinical, distance_method = "euclidean")
+
+# NOT SHOWN BECAUSE THE RESULTS ARE SIMILAR TO THE MORE COMMON PCA
+```
+
+
 ## IDA BIODICA Analysis
 ```{r fig.width=10, fig.height=10}
 # Load MetaSample and MetaGene from BIODICA analysis. 

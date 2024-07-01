@@ -6,6 +6,8 @@ library(dendextend)
 library(grid)
 library(pheatmap)
 library(FactoMineR)
+library(vegan)
+library(patchwork)
 
 # expr_df wit patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
 # dfs_same_patients_same_order <- function(expr_df, sample_feat_df) {
@@ -161,41 +163,62 @@ compute_distribution <- function(data, plot_title, xlab, ylab = "Density", use_l
 # expr_df with patients as columns. clinical data with patients as rows. Return a final merged df with patient as columns
 Compute_Heatmaps <- function(expr_df, sample_metadata_df = NULL, 
                              basic_pheatmap = TRUE,
+                             sample_vs_sample = FALSE,
                              distance_method = "euclidean", 
                              clustering_method = "complete") {
   
   # Ensure same patients order
   if (identical(colnames(expr_df), rownames(sample_metadata_df))){
+    
     # Compute Heatmap on expr values
-    if (basic_pheatmap == TRUE){
-      pheatmap(as.matrix(expr_df), main = "heatmap", # Here none clustering or distance parameters has been used
-               annotation_col = sample_metadata_df,
-               color = hcl.colors(50, "BluYl"),
-               show_colnames = TRUE, show_rownames = FALSE,
-               fontsize_col = 5, fontsize_row = 5, fontsize = 10)
-      #grid.text("genes", x=0.55, y=0.5, rot=270)
-      grid.text("patients", x=0.3, y=0.1, rot=0)
+    if (!(distance_method %in% c("spearman", "pearson"))) {
+      if (basic_pheatmap == TRUE){
+        pheatmap(as.matrix(expr_df), main = "Samples vs Genes heatmap",
+                 annotation_col = sample_metadata_df,
+                 color = hcl.colors(50, "BluYl"),
+                 cluster_rows =FALSE, 
+                 clustering_distance_cols = distance_method,
+                 clustering_method = clustering_method,
+                 show_colnames = TRUE, show_rownames = FALSE,
+                 fontsize_col = 5, fontsize_row = 5)
+      }
     }
     
-    
-    # Compute sample vs sample Heatmap
-    ## Sample distance 
-    sampleDists <- dist(t(expr_df), method = distance_method) 
-    sampleDistMatrix <- as.matrix(sampleDists)
-    
-    ## Pheatmap creation 
-    pheatmap(sampleDistMatrix, main = paste("Sample vs samples heatmap - distance:", distance_method, "clustering:" ,clustering_method),
-             annotation_col = sample_metadata_df,
-             color = hcl.colors(50, "BluYl"),
-             show_colnames = TRUE, show_rownames = TRUE,
-             fontsize_col = 5, fontsize_row = 5, fontsize = 10, 
-             clustering_distance_rows = sampleDists, 
-             clustering_distance_cols = sampleDists,
-             clustering_method = clustering_method,
-             legend_breaks = c(min(sampleDistMatrix), max(sampleDistMatrix)),
-             legend_labels = c("Similar", "Distant"),
-             border = NA)  
-  } else {
+    if (sample_vs_sample == TRUE){
+      # Compute sample vs sample Heatmap based on distance or correlation
+      if (distance_method %in% c("spearman", "pearson")) {
+        # Calculate correlation matrix and convert to distance
+        cor_matrix <- cor(expr_df, method = distance_method)
+        
+        # Convert correlation to distance
+        distance_matrix <- 1 - abs(cor_matrix)
+      }
+      else {
+        # Calculate distance using specified method
+        distance_matrix <- dist(t(expr_df), method = distance_method)
+      }
+      
+      # Convert distance object to matrix if necessary
+      if (!is.matrix(distance_matrix)) {
+        distance_matrix <- as.matrix(distance_matrix)
+      }
+      
+      ## Pheatmap creation for sample vs sample heatmap
+      pheatmap(distance_matrix, 
+               main = paste("Sample vs Sample heatmap - distance:", distance_method, "clustering:", clustering_method),
+               annotation_col = sample_metadata_df,
+               color = hcl.colors(50, "BluYl"),
+               show_colnames = TRUE, show_rownames = TRUE,
+               fontsize_col = 5, fontsize_row = 5,
+               clustering_distance_rows = as.dist(distance_matrix),
+               clustering_distance_cols = as.dist(distance_matrix),
+               clustering_method = clustering_method,
+               legend_breaks = c(min(distance_matrix), max(distance_matrix)),
+               legend_labels = c("Similar", "Distant"),
+               border = NA)
+    }
+  }
+  else {
     cat("Patients are not in the same order")
   }
 }
@@ -229,28 +252,172 @@ Compute_Heatmaps <- function(expr_df, sample_metadata_df = NULL,
 
 # Plots - PCA
 ## Automatically compute on samples: SAMPLES MUST BE ON EXPR DF COLUMNS, as it is common to have
-Compute_PCA_biplot = function(expr_df, sample_metadata_df = NULL){
-  pca_result <- FactoMineR::PCA(t(expr_df), scale.unit = TRUE, graph = FALSE)  
+Compute_PCA_biplot = function(expr_df, sample_metadata_df = NULL, num_arrows = 5, ellipse_area = 0.95){
+  pca_result <- FactoMineR::PCA(t(expr_df), scale.unit = FALSE, graph = FALSE)  
   PCs_var = fviz_eig(pca_result) # Scree plot: explained variance by PCs
   print(PCs_var)
+  
+  plot_list <- list()
+  
   # basic PCA 
   p = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
                                             palette = "Dark2", 
                                             ggtheme = theme_minimal())
+  plot_list[["Basic PCA Biplot"]] <- p
   print(p)
   
   # PCA with clinical feature ellipses 
   if(is.null(sample_metadata_df) == FALSE) {
     for (feat in colnames(sample_metadata_df)){
-      p_with_feat = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = 5), label = "var",
+      p_with_feat = factoextra::fviz_pca_biplot(pca_result, repel = T, select.var = list(contrib = num_arrows), label = "var",
                                                 habillage = as.factor(sample_metadata_df[,feat]),
-                                                addEllipses = T, ellipse.level=0.95, palette = "Dark2", 
+                                                addEllipses = T, ellipse.level=ellipse_area, alpha.ellipse = 0.1, palette = "Dark2", 
                                                 legend.title = feat,
                                                 ggtheme = theme_minimal())
       print(p_with_feat)
+      plot_list[[feat]] <- p_with_feat
     }
   }
   # repel = T do not overlap the text, select.var = list(contrib = 5) shows only the most 5 variable feature (variables) that contributes to separation. label = var , put label ONLY on the 5 variables
+  combined_plot <- wrap_plots(plot_list, ncol = 2) +
+    #plot_layout(guides = 'collect') +
+    plot_annotation(
+      title = "PCA Biplots",
+      theme = theme(
+        plot.title = element_text(size = 8)
+      )
+    ) 
+  #print(combined_plot)
+  #return(combined_plot)
+  return(pca_result)
+}
+
+# Plots - PCOA
+compute_pcoa <- function(expr_df, sample_metadata_df, distance_method = "euclidean") {
+  # Calculate distance based on the chosen method
+  if (distance_method %in% c("spearman", "pearson")) {
+    cor_matrix <- cor(expr_df, method = distance_method)
+    distance_matrix <- as.dist(1 - cor_matrix)
+  } else {
+    distance_matrix <- vegdist(t(expr_df), method = distance_method)
+  }
+  
+  # Perform PCoA
+  pcoa_result <- cmdscale(distance_matrix, eig = TRUE, k = 2)
+  
+  # Create a data frame with PCoA results
+  pcoa_df <- data.frame(Sample = rownames(pcoa_result[["points"]]), 
+                        PC1 = pcoa_result[["points"]][, 1],
+                        PC2 = pcoa_result[["points"]][, 2])
+  
+  # Join the PCoA data frame with the metadata
+  sample_metadata_df = tibble::rownames_to_column(sample_metadata_df, var = "Sample")
+  
+  plots = list()
+  # Loop through each column in sample_metadata_df
+  for (col_name in colnames(sample_metadata_df)[-1]) {
+    df <- dplyr::left_join(pcoa_df, sample_metadata_df[,c("Sample", col_name)], by = "Sample")
+    colnames(df)[4] = "groups"
+    p = ggplot(df, aes(x = PC1, y = PC2, color = groups)) +
+      geom_point(size = 2) +
+      labs(title = paste("PCoA with", distance_method, "Distance"),
+           x = "PCoA1", y = "PCoA2", color = col_name) +
+      theme_minimal() + 
+      theme(
+        plot.title = element_text(size = 7),
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        axis.title = element_text(size = 7),
+        axis.text = element_text(size = 7), 
+        legend.box.margin = margin(-10, 0, -10, 0)
+      )
+    plots = append(plots, list(p))
+  }
+  
+  combined_plot <- patchwork::wrap_plots(plots) +
+    plot_annotation(title = "PCoA Plots with Different Metadata", 
+                    theme = theme(plot.title = element_text(size = 8)))
+  print(combined_plot)
+}
+
+
+# Plots - NMDS 
+compute_nmds <- function(expr_df, sample_metadata_df, distance_method = "euclidean") {
+  # Calculate distance based on the chosen method
+  if (distance_method %in% c("spearman", "pearson")) {
+    cor_matrix <- cor(expr_df, method = distance_method)
+    distance_matrix <- as.dist(1 - cor_matrix)
+  } else {
+    distance_matrix <- vegdist(t(expr_df), method = distance_method)
+  }
+  
+  # Perform NMDS
+  nmds_result <- metaMDS(distance_matrix, trymax = 100)
+  nmds_scores <- as.data.frame(scores(nmds_result))
+  nmds_scores <- tibble::rownames_to_column(nmds_scores, var = "Sample")
+  
+  sample_metadata_df = tibble::rownames_to_column(sample_metadata_df, var = "Sample")
+  
+  plots_nmds = list()
+  # Loop through each column in sample_metadata_df
+  for (col_name in colnames(sample_metadata_df)[-1]) {
+    df2 <- dplyr::left_join(nmds_scores, sample_metadata_df[,c("Sample", col_name)], by = "Sample")
+    colnames(df2)[4] = "groups"
+    p_nmds = ggplot(df2, aes(x = NMDS1, y = NMDS2, color = groups)) +
+      geom_point(size = 2) +
+      labs(title = paste("NMDS with", distance_method, "Distance"),
+           x = "NMDS1", y = "NMDS2", color = col_name) +
+      theme_minimal() + 
+      theme(
+        plot.title = element_text(size = 7),
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        axis.title = element_text(size = 7),
+        axis.text = element_text(size = 7), 
+        legend.box.margin = margin(-10, 0, -10, 0)
+      )
+    plots_nmds = append(plots_nmds, list(p_nmds))
+  }
+  
+  combined_plot_nmds <- patchwork::wrap_plots(plots_nmds) +
+    plot_annotation(title = "NMDS Plots with Different Metadata", 
+                    theme = theme(plot.title = element_text(size = 8)))
+  print(combined_plot_nmds)
+}
+
+compute_pcoa_3d <- function(expr_df, sample_metadata_df, distance_method = "euclidean") {
+  # Calculate distance based on the chosen method
+  if (distance_method %in% c("spearman", "pearson")) {
+    cor_matrix <- cor(expr_df, method = distance_method)
+    distance_matrix <- as.dist(1 - cor_matrix)
+  } else {
+    distance_matrix <- vegdist(t(expr_df), method = distance_method)
+  }
+  
+  # Perform PCoA with three dimensions
+  pcoa_result <- cmdscale(distance_matrix, eig = TRUE, k = 3)
+  
+  # Create a data frame with PCoA results for three dimensions
+  pcoa_df <- data.frame(Sample = rownames(pcoa_result[["points"]]), 
+                        PC1 = pcoa_result[["points"]][, 1],
+                        PC2 = pcoa_result[["points"]][, 2],
+                        PC3 = pcoa_result[["points"]][, 3])
+  
+  # Join the PCoA data frame with the metadata
+  sample_metadata_df = tibble::rownames_to_column(sample_metadata_df, var = "Sample")
+  
+  # Loop through each column in sample_metadata_df to create 3D plots
+  for (col_name in colnames(sample_metadata_df)[-1]) {
+    df <- dplyr::left_join(pcoa_df, sample_metadata_df[,c("Sample", col_name)], by = "Sample")
+    colnames(df)[5] = "groups"
+    
+    # Plot using rgl
+    rgl::open3d()
+    rgl::plot3d(df$PC1, df$PC2, df$PC3, col = rainbow(length(unique(df$groups)))[as.numeric(as.factor(df$groups))],
+                xlab = "PC1", ylab = "PC2", zlab = "PC3", type = 's', radius = 1)
+    rgl::legend3d("topright", legend = levels(factor(df$groups)), col = rainbow(length(unique(df$groups))), pch = 16)
+    rgl::rglwidget() # this will create an interactive widget if you are using RStudio or a similar interface that supports it
+  }
 }
 
 # Plots - Violin plot
